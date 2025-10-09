@@ -22,6 +22,12 @@ This application provides a user-friendly GUI to modify the "added date" for mov
 - 📊 Handles up to 1000 movies (configurable)
 
 ## 🎬 Screenshots
+<img width="938" height="715" alt="2025-10-09_10-26" src="https://github.com/user-attachments/assets/5a93b825-1ae1-4580-8154-759fd4a28fbc" />
+
+<img width="932" height="722" alt="2025-10-09_10-27" src="https://github.com/user-attachments/assets/68a7b38b-56ef-4ca0-aa4d-76aa3860dc7e" />
+
+
+
 
 ### Main Window
 - Browse and search through your movie library
