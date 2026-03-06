@@ -120,6 +120,25 @@ Useful variants:
 
 Release checklist reference: `docs/RELEASE_CHECKLIST.md`
 
+## Generate Release Notes
+
+Generate release notes markdown from git history:
+
+```bash
+cd /Users/sutherland/repo
+./generate_release_notes.sh
+```
+
+Useful variants:
+
+```bash
+# Explicit range from a tag
+./generate_release_notes.sh --from-tag v1.0.0 --to-ref HEAD
+
+# Custom output path
+./generate_release_notes.sh --from-tag v1.0.0 --output docs/release_notes_next.md
+```
+
 ## First Launch Setup
 
 In the app Settings tab, verify:

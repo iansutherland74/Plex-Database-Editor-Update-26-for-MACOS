@@ -8,9 +8,10 @@
 1. Confirm branch and sync latest changes.
 2. Run release prep script.
 3. Review generated report and ensure no failures.
-4. Run optional live smoke checks if targeting a local Plex environment.
-5. Confirm working tree is clean.
-6. Create release notes/tag.
+4. Generate draft release notes from git history.
+5. Run optional live smoke checks if targeting a local Plex environment.
+6. Confirm working tree is clean.
+7. Create release notes/tag.
 
 ## Commands
 
@@ -40,6 +41,13 @@ Include live non-destructive write checks:
 ```bash
 cd /Users/sutherland/repo
 ./run_release_prep.sh --skip-build --include-live-write
+```
+
+Generate draft release notes:
+
+```bash
+cd /Users/sutherland/repo
+./generate_release_notes.sh --from-tag v1.0.0 --to-ref HEAD
 ```
 
 ## Outputs
