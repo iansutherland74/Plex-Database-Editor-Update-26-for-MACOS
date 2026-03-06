@@ -67,6 +67,14 @@ Current builds may show Swift `Sendable` capture warnings in `PlexTVEditorViewMo
 
 See `CONTRIBUTING.md`.
 
+## Credits
+
+- Original project foundation and early tooling: `VirtualD` (Jean Ransier)
+- macOS Swift app updates and ongoing maintenance: `Ian Loveshack`
+- Upstream/original repository lineage: `https://github.com/ransierJ/Plex-Recently-Added-movies-editor`
+
+See `CREDITS.md` for attribution details.
+
 ## License
 
 MIT License. See `LICENSE`.
