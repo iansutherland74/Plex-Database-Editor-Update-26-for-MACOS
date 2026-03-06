@@ -1,8 +1,11 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$PROJECT_DIR"
+
+START_TIME="$(date +%s)"
+echo "[stage2] Running Stage 2 reliability tests..."
 
 SDK_PATH="$(xcrun --sdk macosx --show-sdk-path 2>/dev/null || true)"
 if [ -z "$SDK_PATH" ] || [ ! -d "$SDK_PATH" ]; then
@@ -10,7 +13,7 @@ if [ -z "$SDK_PATH" ] || [ ! -d "$SDK_PATH" ]; then
 fi
 
 if [ -z "$SDK_PATH" ] || [ ! -d "$SDK_PATH" ]; then
-    echo "Could not locate macOS SDK"
+    echo "[stage2] FAIL: Could not locate macOS SDK"
     exit 1
 fi
 
@@ -35,20 +38,29 @@ while [ $COMPILE_ATTEMPT -le $MAX_COMPILE_ATTEMPTS ]; do
     COMPILE_EXIT=$?
     set -e
 
-    echo "$COMPILE_OUTPUT"
+    if [ -n "$COMPILE_OUTPUT" ]; then
+        echo "$COMPILE_OUTPUT"
+    fi
 
     if [ $COMPILE_EXIT -eq 0 ]; then
         break
     fi
 
     if echo "$COMPILE_OUTPUT" | grep -q "was modified during the build" && [ $COMPILE_ATTEMPT -lt $MAX_COMPILE_ATTEMPTS ]; then
-        echo "Detected transient source write during compile; retrying..."
+        echo "[stage2] WARN: Detected transient source write during compile; retrying..."
         COMPILE_ATTEMPT=$((COMPILE_ATTEMPT + 1))
         sleep 1
         continue
     fi
 
+    echo "[stage2] FAIL: Compile failed"
     exit $COMPILE_EXIT
 done
 
-"$OUT_BIN"
+if "$OUT_BIN"; then
+    END_TIME="$(date +%s)"
+    echo "[stage2] Completed in $((END_TIME - START_TIME))s"
+else
+    echo "[stage2] FAIL: Stage 2 reliability binary exited non-zero"
+    exit 1
+fi
