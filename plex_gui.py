@@ -15,6 +15,13 @@ import shutil
 import json
 from pathlib import Path
 
+# optional dependency for TMDB integration
+try:
+    import requests
+except ImportError:
+    requests = None  # will check later when needed
+
+
 class PlexDatabaseEditor:
     def __init__(self, root):
         self.root = root
@@ -73,7 +80,8 @@ class PlexDatabaseEditor:
         config = {
             "plex_sqlite": self.plex_sqlite,
             "db_path": self.db_path,
-            "date_format": self.date_format
+            "date_format": self.date_format,
+            "tmdb_api_key": getattr(self, 'tmdb_api_key', '')
         }
         try:
             with open(self.config_file, 'w') as f:

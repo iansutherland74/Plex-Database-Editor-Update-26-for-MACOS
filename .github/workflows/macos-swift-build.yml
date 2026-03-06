@@ -1,0 +1,34 @@
+name: macOS Swift Build
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  build:
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show Swift Version
+        run: swift --version
+
+      - name: Compile Swift App Sources
+        run: |
+          set -e
+          cd PlexTVEditor
+          swiftc \
+            -parse-as-library \
+            -framework SwiftUI \
+            -framework Foundation \
+            -framework Cocoa \
+            PlexTVEditorApp.swift \
+            ContentView.swift \
+            PlexTVEditorViewModel.swift \
+            PlexDatabaseManager.swift \
+            TMDBClient.swift \
+            -o /tmp/PlexTVEditor-ci-check

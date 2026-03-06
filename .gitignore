@@ -1,0 +1,27 @@
+# macOS
+.DS_Store
+
+# Swift/Xcode build output
+.build/
+DerivedData/
+*.swiftmodule
+*.swiftdoc
+*.swiftsourceinfo
+
+# Xcode user data
+*.xcuserstate
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+
+# App bundles generated locally
+Plex TV Editor.app/
+*.app/
+
+# Local config and secrets
+.plex_tv_editor_config.json
+*.env
+
+# Logs and temp
+*.log
+*.tmp
+*.bak
