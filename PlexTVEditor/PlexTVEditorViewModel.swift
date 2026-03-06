@@ -158,6 +158,7 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
     @Published var isLoadingPlexSections = false
     @Published var isRefreshingPlexSection = false
     @Published var isAnalyzingPlexSection = false
+    @Published var isEmptyingPlexSection = false
     @Published var statusMessage: String = "" {
         didSet {
             logBatchStatusIfNeeded(statusMessage)
@@ -1747,6 +1748,45 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
         }
     }
 
+    func emptyTrashForSelectedPlexSection(sectionKey: String, sectionLabel: String) {
+        let normalizedServerURL = normalizePlexServerURL(plexServerURL)
+        guard !normalizedServerURL.isEmpty,
+              let serverURL = URL(string: normalizedServerURL) else {
+            statusMessage = "Enter a valid Plex server URL"
+            return
+        }
+
+        let token = plexToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !token.isEmpty else {
+            statusMessage = "Enter Plex token before emptying trash"
+            return
+        }
+
+        let trimmedSectionKey = sectionKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedSectionKey.isEmpty else {
+            statusMessage = "Select a Plex section before emptying trash"
+            return
+        }
+
+        isEmptyingPlexSection = true
+        statusMessage = "Queueing Plex empty trash for \(sectionLabel)..."
+
+        Task {
+            do {
+                try await queuePlexSectionEmptyTrash(baseURL: serverURL, token: token, sectionKey: trimmedSectionKey)
+                DispatchQueue.main.async {
+                    self.isEmptyingPlexSection = false
+                    self.statusMessage = "Plex empty trash queued for \(sectionLabel)"
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self.isEmptyingPlexSection = false
+                    self.statusMessage = "Empty trash failed for \(sectionLabel): \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
     func lockAllPlexMetadata(itemIds: [Int], entityLabel: String) {
         setPlexMetadataLockState(itemIds: itemIds, entityLabel: entityLabel, isLocked: true)
     }
@@ -2086,6 +2126,43 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
                 domain: "PlexTVEditor",
                 code: getResponse.statusCode,
                 userInfo: [NSLocalizedDescriptionKey: "Section analyze failed for section \(sectionKey)"]
+            )
+        }
+    }
+
+    private func queuePlexSectionEmptyTrash(baseURL: URL, token: String, sectionKey: String) async throws {
+        var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
+        components?.path = "/library/sections/\(sectionKey)/emptyTrash"
+        components?.queryItems = [
+            URLQueryItem(name: "X-Plex-Token", value: token)
+        ]
+
+        guard let url = components?.url else {
+            throw URLError(.badURL)
+        }
+
+        func runRequest(method: String) async throws -> HTTPURLResponse {
+            var request = URLRequest(url: url)
+            request.httpMethod = method
+            request.timeoutInterval = 20
+            let (_, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                throw URLError(.badServerResponse)
+            }
+            return http
+        }
+
+        let putResponse = try await runRequest(method: "PUT")
+        if (200...299).contains(putResponse.statusCode) {
+            return
+        }
+
+        let getResponse = try await runRequest(method: "GET")
+        guard (200...299).contains(getResponse.statusCode) else {
+            throw NSError(
+                domain: "PlexTVEditor",
+                code: getResponse.statusCode,
+                userInfo: [NSLocalizedDescriptionKey: "Empty trash failed for section \(sectionKey)"]
             )
         }
     }

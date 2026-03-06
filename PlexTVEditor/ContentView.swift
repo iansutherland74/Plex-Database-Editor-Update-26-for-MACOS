@@ -1601,9 +1601,16 @@ struct SettingsView_New: View {
         var id: String { rawValue }
     }
 
+    struct SectionTrashConfirmation: Identifiable {
+        let id = UUID()
+        let sectionKey: String
+        let sectionLabel: String
+    }
+
     @ObservedObject var viewModel: PlexTVEditorViewModel
     @State private var restoringBackupPath: String?
     @State private var pendingRestoreBackup: BackupFileItem?
+    @State private var pendingSectionTrashConfirmation: SectionTrashConfirmation?
     @State private var backupSearchText: String = ""
     @State private var backupSortMode: BackupSortMode = .newest
 
@@ -1792,7 +1799,7 @@ struct SettingsView_New: View {
                                     ActionButton(
                                         title: "Refresh TV Section",
                                         icon: "arrow.triangle.2.circlepath",
-                                        disabled: viewModel.selectedPlexTVSectionKey.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection
+                                        disabled: viewModel.selectedPlexTVSectionKey.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection || viewModel.isEmptyingPlexSection
                                     ) {
                                         let label = tvSections.first(where: { $0.key == viewModel.selectedPlexTVSectionKey })?.title ?? "TV section"
                                         viewModel.refreshSelectedPlexSection(
@@ -1804,7 +1811,7 @@ struct SettingsView_New: View {
                                     ActionButton(
                                         title: "Refresh Movie Section",
                                         icon: "arrow.triangle.2.circlepath",
-                                        disabled: viewModel.selectedPlexMovieSectionKey.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection
+                                        disabled: viewModel.selectedPlexMovieSectionKey.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection || viewModel.isEmptyingPlexSection
                                     ) {
                                         let label = movieSections.first(where: { $0.key == viewModel.selectedPlexMovieSectionKey })?.title ?? "Movie section"
                                         viewModel.refreshSelectedPlexSection(
@@ -1818,7 +1825,7 @@ struct SettingsView_New: View {
                                     ActionButton(
                                         title: "Analyze TV Section",
                                         icon: "waveform.path.ecg",
-                                        disabled: viewModel.selectedPlexTVSectionKey.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection
+                                        disabled: viewModel.selectedPlexTVSectionKey.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection || viewModel.isEmptyingPlexSection
                                     ) {
                                         let label = tvSections.first(where: { $0.key == viewModel.selectedPlexTVSectionKey })?.title ?? "TV section"
                                         viewModel.analyzeSelectedPlexSection(
@@ -1830,10 +1837,36 @@ struct SettingsView_New: View {
                                     ActionButton(
                                         title: "Analyze Movie Section",
                                         icon: "waveform.path.ecg",
-                                        disabled: viewModel.selectedPlexMovieSectionKey.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection
+                                        disabled: viewModel.selectedPlexMovieSectionKey.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection || viewModel.isEmptyingPlexSection
                                     ) {
                                         let label = movieSections.first(where: { $0.key == viewModel.selectedPlexMovieSectionKey })?.title ?? "Movie section"
                                         viewModel.analyzeSelectedPlexSection(
+                                            sectionKey: viewModel.selectedPlexMovieSectionKey,
+                                            sectionLabel: label
+                                        )
+                                    }
+                                }
+
+                                HStack(spacing: 12) {
+                                    ActionButton(
+                                        title: "Empty TV Trash",
+                                        icon: "trash.fill",
+                                        disabled: viewModel.selectedPlexTVSectionKey.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection || viewModel.isEmptyingPlexSection
+                                    ) {
+                                        let label = tvSections.first(where: { $0.key == viewModel.selectedPlexTVSectionKey })?.title ?? "TV section"
+                                        pendingSectionTrashConfirmation = SectionTrashConfirmation(
+                                            sectionKey: viewModel.selectedPlexTVSectionKey,
+                                            sectionLabel: label
+                                        )
+                                    }
+
+                                    ActionButton(
+                                        title: "Empty Movie Trash",
+                                        icon: "trash.fill",
+                                        disabled: viewModel.selectedPlexMovieSectionKey.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection || viewModel.isEmptyingPlexSection
+                                    ) {
+                                        let label = movieSections.first(where: { $0.key == viewModel.selectedPlexMovieSectionKey })?.title ?? "Movie section"
+                                        pendingSectionTrashConfirmation = SectionTrashConfirmation(
                                             sectionKey: viewModel.selectedPlexMovieSectionKey,
                                             sectionLabel: label
                                         )
@@ -1859,6 +1892,20 @@ struct SettingsView_New: View {
                                             .foregroundColor(.plexTextSecondary)
                                     }
                                 }
+
+                                if viewModel.isEmptyingPlexSection {
+                                    HStack(spacing: 8) {
+                                        ProgressView()
+                                            .progressViewStyle(CircularProgressViewStyle(tint: .plexOrange))
+                                        Text("Queueing Plex empty trash...")
+                                            .font(.system(size: 12))
+                                            .foregroundColor(.plexTextSecondary)
+                                    }
+                                }
+
+                                Text("Empty Trash is destructive and removes entries Plex marked as unavailable for the selected section.")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.plexTextSecondary)
                             }
                             .padding(10)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -2038,6 +2085,22 @@ struct SettingsView_New: View {
                 },
                 secondaryButton: .cancel {
                     pendingRestoreBackup = nil
+                }
+            )
+        }
+        .alert(item: $pendingSectionTrashConfirmation) { pending in
+            Alert(
+                title: Text("Empty Plex Trash?"),
+                message: Text("This will remove unavailable items from \(pending.sectionLabel). This cannot be undone."),
+                primaryButton: .destructive(Text("Empty Trash")) {
+                    viewModel.emptyTrashForSelectedPlexSection(
+                        sectionKey: pending.sectionKey,
+                        sectionLabel: pending.sectionLabel
+                    )
+                    pendingSectionTrashConfirmation = nil
+                },
+                secondaryButton: .cancel {
+                    pendingSectionTrashConfirmation = nil
                 }
             )
         }
