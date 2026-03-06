@@ -1047,6 +1047,10 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
     }
 
     func applyLastDryRunPreview() {
+        applyDryRunPreview(forEpisodeIds: lastDryRunEpisodeIds)
+    }
+
+    func applyDryRunPreview(forEpisodeIds episodeIds: [Int]) {
         guard !isDryRunLoading else {
             statusMessage = "Dry run is still loading"
             return
@@ -1059,8 +1063,15 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
             return
         }
 
+        let selectedSet = Set(episodeIds)
+        let orderedEpisodeIds = lastDryRunEpisodeIds.filter { selectedSet.contains($0) }
+        guard !orderedEpisodeIds.isEmpty else {
+            statusMessage = "Select at least one dry run row to apply"
+            return
+        }
+
         applyTMDBMetadataToEpisodes(
-            episodeIds: lastDryRunEpisodeIds,
+            episodeIds: orderedEpisodeIds,
             tmdbStartSeasonNumber: season,
             tmdbStartEpisodeNumber: episode,
             tmdbShowIdOrURL: lastDryRunShowRef

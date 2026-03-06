@@ -1986,6 +1986,7 @@ struct DryRunPreviewSheet: View {
     let onClose: () -> Void
     @State private var confirmApplyDryRun = false
     @State private var showChangesOnly = true
+    @State private var selectedDryRunEpisodeIds: Set<Int> = []
 
     private var visibleDryRunRows: [DryRunDiffRow] {
         guard showChangesOnly else { return viewModel.dryRunRows }
@@ -1994,6 +1995,14 @@ struct DryRunPreviewSheet: View {
 
     private var changedCount: Int {
         viewModel.dryRunRows.filter { hasMeaningfulChange($0) }.count
+    }
+
+    private var visibleEpisodeIdSet: Set<Int> {
+        Set(visibleDryRunRows.map { $0.episodeId })
+    }
+
+    private var selectedApplyCount: Int {
+        Set(viewModel.dryRunRows.map { $0.episodeId }).intersection(selectedDryRunEpisodeIds).count
     }
 
     var body: some View {
@@ -2030,7 +2039,33 @@ struct DryRunPreviewSheet: View {
                             .font(.system(size: 11))
                             .foregroundColor(.plexTextSecondary)
 
+                        Text("Selected: \(selectedApplyCount)")
+                            .font(.system(size: 11))
+                            .foregroundColor(.plexTextSecondary)
+
                         Spacer()
+
+                        Button("Select Visible") {
+                            selectedDryRunEpisodeIds.formUnion(visibleEpisodeIdSet)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.plexTextPrimary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color.plexLightGray.opacity(0.6))
+                        .cornerRadius(6)
+
+                        Button("Clear") {
+                            selectedDryRunEpisodeIds.removeAll()
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.plexTextPrimary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color.plexLightGray.opacity(0.6))
+                        .cornerRadius(6)
 
                         Button("Export CSV") {
                             viewModel.exportDryRun(format: .csv, onlyChangedRows: showChangesOnly)
@@ -2081,6 +2116,10 @@ struct DryRunPreviewSheet: View {
                             ForEach(visibleDryRunRows) { row in
                                 VStack(alignment: .leading, spacing: 4) {
                                     HStack {
+                                        Image(systemName: selectedDryRunEpisodeIds.contains(row.episodeId) ? "checkmark.circle.fill" : "circle")
+                                            .font(.system(size: 12))
+                                            .foregroundColor(selectedDryRunEpisodeIds.contains(row.episodeId) ? .plexOrange : .plexTextSecondary)
+
                                         Text("#\(row.episodeId)")
                                             .font(.system(size: 11, weight: .semibold))
                                             .foregroundColor(.plexOrange)
@@ -2109,6 +2148,9 @@ struct DryRunPreviewSheet: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .background(Color.plexLightGray.opacity(0.25))
                                 .cornerRadius(8)
+                                .onTapGesture {
+                                    toggleDryRunSelection(for: row.episodeId)
+                                }
                             }
                         }
                         .padding(.top, 4)
@@ -2120,16 +2162,16 @@ struct DryRunPreviewSheet: View {
 
             HStack {
                 Spacer()
-                Button("Apply Last Dry Run") {
+                Button("Apply Selected") {
                     confirmApplyDryRun = true
                 }
                 .buttonStyle(PlainButtonStyle())
                 .foregroundColor(.black)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
-                .background(viewModel.dryRunRows.isEmpty || viewModel.isDryRunLoading ? Color.plexLightGray : Color.plexOrange)
+                .background(selectedApplyCount == 0 || viewModel.isDryRunLoading ? Color.plexLightGray : Color.plexOrange)
                 .cornerRadius(6)
-                .disabled(viewModel.dryRunRows.isEmpty || viewModel.isDryRunLoading)
+                .disabled(selectedApplyCount == 0 || viewModel.isDryRunLoading)
 
                 Button("Close") {
                     onClose()
@@ -2150,12 +2192,18 @@ struct DryRunPreviewSheet: View {
         .onExitCommand {
             onClose()
         }
+        .onAppear {
+            selectedDryRunEpisodeIds = Set(viewModel.dryRunRows.map { $0.episodeId })
+        }
+        .onChange(of: viewModel.dryRunRows.map { $0.episodeId }) { ids in
+            selectedDryRunEpisodeIds = Set(ids)
+        }
         .alert(isPresented: $confirmApplyDryRun) {
             Alert(
                 title: Text("Apply Dry Run Changes?"),
-                message: Text("This will apply TMDB metadata updates for \(viewModel.dryRunRows.count) episode(s) using the last dry-run mapping."),
+                message: Text("This will apply TMDB metadata updates for \(selectedApplyCount) selected episode(s) using the last dry-run mapping."),
                 primaryButton: .destructive(Text("Apply")) {
-                    viewModel.applyLastDryRunPreview()
+                    viewModel.applyDryRunPreview(forEpisodeIds: Array(selectedDryRunEpisodeIds))
                     onClose()
                 },
                 secondaryButton: .cancel()
@@ -2165,6 +2213,14 @@ struct DryRunPreviewSheet: View {
 
     private func hasMeaningfulChange(_ row: DryRunDiffRow) -> Bool {
         viewModel.isDryRunMeaningfulChange(row)
+    }
+
+    private func toggleDryRunSelection(for episodeId: Int) {
+        if selectedDryRunEpisodeIds.contains(episodeId) {
+            selectedDryRunEpisodeIds.remove(episodeId)
+        } else {
+            selectedDryRunEpisodeIds.insert(episodeId)
+        }
     }
 }
 
