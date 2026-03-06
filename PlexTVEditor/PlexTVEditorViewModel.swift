@@ -1945,10 +1945,15 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
         }
 
         Task {
-            let refresh = await probePlexEndpoint(baseURL: serverURL, token: token, path: "/library/sections/\(probeSection.key)/refresh")
-            let analyze = await probePlexEndpoint(baseURL: serverURL, token: token, path: "/library/sections/\(probeSection.key)/analyze")
-            let emptyTrash = await probePlexEndpoint(baseURL: serverURL, token: token, path: "/library/sections/\(probeSection.key)/emptyTrash")
-            let cancel = await probePlexEndpoint(baseURL: serverURL, token: token, path: "/library/sections/\(probeSection.key)/refresh/cancel")
+            let refresh = await probePlexSectionActionCapability(baseURL: serverURL, token: token, sectionKey: probeSection.key, action: .refresh)
+            let analyze = await probePlexSectionActionCapability(baseURL: serverURL, token: token, sectionKey: probeSection.key, action: .analyze)
+
+            // Empty trash and cancel probes are treated as advisory because many servers return
+            // generic 404/405 for OPTIONS/HEAD even when runtime action methods are accepted.
+            let emptyTrashProbe = await probePlexEndpoint(baseURL: serverURL, token: token, path: "/library/sections/\(probeSection.key)/emptyTrash")
+            let cancelProbe = await probePlexEndpoint(baseURL: serverURL, token: token, path: "/library/sections/\(probeSection.key)/refresh/cancel")
+            let emptyTrash = emptyTrashProbe || self.plexCapabilities.canEmptyTrashSection
+            let cancel = cancelProbe || self.plexCapabilities.canCancelSectionJob
 
             DispatchQueue.main.async {
                 self.plexCapabilities = PlexCapabilities(
@@ -3394,6 +3399,20 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
         }
 
         return false
+    }
+
+    private func probePlexSectionActionCapability(
+        baseURL: URL,
+        token: String,
+        sectionKey: String,
+        action: PlexSectionActionKind
+    ) async -> Bool {
+        do {
+            try await queuePlexSectionAction(baseURL: baseURL, token: token, sectionKey: sectionKey, action: action)
+            return true
+        } catch {
+            return false
+        }
     }
 
     private func latestFailedSectionActions(for sectionKeys: Set<String>) -> [PlexSectionActionHistoryEntry] {

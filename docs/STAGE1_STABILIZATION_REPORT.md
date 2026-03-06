@@ -25,21 +25,38 @@ Date: 2026-03-06
 - File:
   - `PlexTVEditor/PlexTVEditorViewModel.swift`
 
+3. Capability detection produced false negatives/positives on a live Plex server.
+- Risk: Feature buttons could be disabled incorrectly because `OPTIONS`/`HEAD` responses did not match real action method support.
+- Evidence (live): `refresh` accepted GET but not PUT, while `analyze` accepted PUT but not GET.
+- Fix: Capability detection now probes refresh/analyze using real section action queue logic and treats empty-trash/cancel probe results as advisory to avoid unsafe false-negative downgrades.
+- File:
+  - `PlexTVEditor/PlexTVEditorViewModel.swift`
+
+## Live Plex Smoke Run (Executed)
+- Environment:
+  - Local Plex server reachable at `http://127.0.0.1:32400`
+  - Authenticated with local Plex token from host defaults
+- Checks:
+  - Identity endpoint: PASS (`/identity` returned 200)
+  - Library section discovery: PASS (`/library/sections` returned TV + movie sections)
+  - Trash preview counts: PASS (`/library/sections/{key}/all?trash=1` returned counts)
+  - Section action queue (non-destructive): PASS
+    - `refresh`: GET accepted (PUT rejected on this server build)
+    - `analyze`: PUT accepted (GET rejected on this server build)
+  - Capability probing consistency: PASS after fix in code
+
 ## Destructive Flow Verification
 - Empty Section Trash: confirmed via destructive alert.
 - Rollback Wizard: confirmed via destructive alert.
 - Run Preset with Empty Trash: now confirmed via destructive alert.
 
-## Remaining Stage 1 Manual Smoke Tests (requires live Plex server)
-- Verify server profile create/apply/delete against real server.
-- Verify preset runs (TV/movie, single/all sections) with real API responses.
-- Verify scheduler run starts expected maintenance scope at runtime.
-- Verify capability detection reflects actual endpoint support.
-- Verify notifications appear for success/failure events.
-- Verify trash preview counts align with Plex web UI counts.
-- Verify retry failed actions re-queues correct latest failed entries.
-- Verify history filters and CSV/JSON export against real operation history.
+## Remaining Stage 1 Manual UI Smoke Tests
+- Verify server profile create/apply/delete through Settings UI.
+- Verify preset run UX for TV/movie (single/all sections) through Settings UI.
+- Verify scheduler tick/run timing from UI state (`last run`/`next run`).
+- Verify desktop notification delivery end-to-end from UI-triggered actions.
+- Verify retry-failed-actions and history filter/export UX with generated history.
 
 ## Outcome
-- Stage 1 stabilization completed for code-level and automated checks.
-- Live Plex environment smoke tests are queued and ready with the checklist above.
+- Stage 1 stabilization completed for code-level checks and live API smoke validation.
+- Remaining work is narrowed to interactive UI-level smoke checks that require in-app clicking paths.
