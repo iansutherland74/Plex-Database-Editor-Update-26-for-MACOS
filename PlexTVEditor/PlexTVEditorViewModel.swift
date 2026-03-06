@@ -123,6 +123,18 @@ enum DryRunExportFormat {
     }
 }
 
+enum SectionActionHistoryExportFormat {
+    case csv
+    case json
+
+    var fileExtension: String {
+        switch self {
+        case .csv: return "csv"
+        case .json: return "json"
+        }
+    }
+}
+
 struct ChangeLogEntry: Codable, Identifiable {
     let id: UUID
     let timestampISO8601: String
@@ -2126,6 +2138,48 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
         statusMessage = "Cleared section action history"
     }
 
+    func exportSectionActionHistory(format: SectionActionHistoryExportFormat, selectedSectionKeys: Set<String> = []) {
+        let normalizedKeys = Set(selectedSectionKeys.map {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines)
+        }.filter { !$0.isEmpty })
+
+        let entriesToExport: [PlexSectionActionHistoryEntry]
+        if normalizedKeys.isEmpty {
+            entriesToExport = plexSectionActionHistory
+        } else {
+            entriesToExport = plexSectionActionHistory.filter { normalizedKeys.contains($0.sectionKey) }
+        }
+
+        guard !entriesToExport.isEmpty else {
+            statusMessage = "No section history entries to export"
+            return
+        }
+
+        let panel = NSSavePanel()
+        panel.canCreateDirectories = true
+        panel.allowedFileTypes = [format.fileExtension]
+        panel.nameFieldStringValue = "plex_section_history_\(Self.fileTimestamp()).\(format.fileExtension)"
+        panel.title = "Export Section History"
+        panel.message = "Save section history as \(format.fileExtension.uppercased())"
+
+        guard panel.runModal() == .OK, let url = panel.url else {
+            statusMessage = "Section history export cancelled"
+            return
+        }
+
+        do {
+            switch format {
+            case .csv:
+                try csvDataForSectionActionHistory(entries: entriesToExport).write(to: url, options: .atomic)
+            case .json:
+                try jsonDataForSectionActionHistory(entries: entriesToExport).write(to: url, options: .atomic)
+            }
+            statusMessage = "Exported \(entriesToExport.count) section history entries"
+        } catch {
+            statusMessage = "Failed to export section history: \(error.localizedDescription)"
+        }
+    }
+
     func lockAllPlexMetadata(itemIds: [Int], entityLabel: String) {
         setPlexMetadataLockState(itemIds: itemIds, entityLabel: entityLabel, isLocked: true)
     }
@@ -2781,6 +2835,54 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         return try encoder.encode(changeLogEntries)
+    }
+
+    private func csvDataForSectionActionHistory(entries: [PlexSectionActionHistoryEntry]) throws -> Data {
+        var lines: [String] = []
+        lines.append("timestamp,section_key,section_label,action,outcome")
+
+        for entry in entries {
+            let fields: [String] = [
+                Self.changeLogDateFormatter.string(from: entry.timestamp),
+                entry.sectionKey,
+                entry.sectionLabel,
+                entry.actionLabel,
+                entry.outcome
+            ]
+            lines.append(fields.map(Self.csvEscape).joined(separator: ","))
+        }
+
+        let csv = lines.joined(separator: "\n")
+        guard let data = csv.data(using: .utf8) else {
+            throw NSError(domain: "PlexTVEditor", code: 5, userInfo: [NSLocalizedDescriptionKey: "Could not encode section history CSV as UTF-8"])
+        }
+        return data
+    }
+
+    private func jsonDataForSectionActionHistory(entries: [PlexSectionActionHistoryEntry]) throws -> Data {
+        struct ExportRow: Codable {
+            let id: UUID
+            let timestampISO8601: String
+            let sectionKey: String
+            let sectionLabel: String
+            let action: String
+            let outcome: String
+        }
+
+        let payload = entries.map {
+            ExportRow(
+                id: $0.id,
+                timestampISO8601: Self.changeLogDateFormatter.string(from: $0.timestamp),
+                sectionKey: $0.sectionKey,
+                sectionLabel: $0.sectionLabel,
+                action: $0.actionLabel,
+                outcome: $0.outcome
+            )
+        }
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return try encoder.encode(payload)
     }
 
     private func csvDataForDryRun(rows: [DryRunDiffRow]) throws -> Data {

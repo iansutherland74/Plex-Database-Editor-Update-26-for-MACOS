@@ -1655,6 +1655,20 @@ struct SettingsView_New: View {
         let combined = tvSectionHistory + movieSectionHistory
         return combined.contains { $0.outcome.lowercased().contains("failed") }
     }
+
+    private var selectedSectionHistoryKeys: Set<String> {
+        Set([
+            viewModel.selectedPlexTVSectionKey.trimmingCharacters(in: .whitespacesAndNewlines),
+            viewModel.selectedPlexMovieSectionKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        ].filter { !$0.isEmpty })
+    }
+
+    private var sectionHistoryExportCount: Int {
+        guard !selectedSectionHistoryKeys.isEmpty else {
+            return viewModel.plexSectionActionHistory.count
+        }
+        return viewModel.plexSectionActionHistory.filter { selectedSectionHistoryKeys.contains($0.sectionKey) }.count
+    }
     
     var body: some View {
         ScrollView {
@@ -2042,6 +2056,28 @@ struct SettingsView_New: View {
                             }
 
                             ActionButton(
+                                title: "Export CSV",
+                                icon: "tablecells",
+                                disabled: sectionHistoryExportCount == 0
+                            ) {
+                                viewModel.exportSectionActionHistory(
+                                    format: .csv,
+                                    selectedSectionKeys: selectedSectionHistoryKeys
+                                )
+                            }
+
+                            ActionButton(
+                                title: "Export JSON",
+                                icon: "curlybraces",
+                                disabled: sectionHistoryExportCount == 0
+                            ) {
+                                viewModel.exportSectionActionHistory(
+                                    format: .json,
+                                    selectedSectionKeys: selectedSectionHistoryKeys
+                                )
+                            }
+
+                            ActionButton(
                                 title: "Clear Section History",
                                 icon: "trash",
                                 disabled: viewModel.plexSectionActionHistory.isEmpty
@@ -2049,7 +2085,7 @@ struct SettingsView_New: View {
                                 viewModel.clearPlexSectionActionHistory()
                             }
 
-                            Text("Entries: \(viewModel.plexSectionActionHistory.count)")
+                            Text("Entries: \(sectionHistoryExportCount)")
                                 .font(.system(size: 12))
                                 .foregroundColor(.plexTextSecondary)
                         }
