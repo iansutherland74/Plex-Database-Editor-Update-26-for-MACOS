@@ -67,6 +67,13 @@ cd /Users/sutherland/repo
 ./run_stage2_tests.sh
 ```
 
+## Run Stage 3 Workflow Tests
+
+```bash
+cd /Users/sutherland/repo
+./run_stage3_tests.sh
+```
+
 ## Run Full Quality Gate
 
 Run the full local validation gate (build + tests + script checks):
@@ -213,6 +220,7 @@ GitHub Actions workflow `macOS Swift Build` runs on pushes/PRs to `main` and val
 - Swift source compile for the app target files
 - `./run_dry_run_tests.sh`
 - `./run_stage2_tests.sh`
+- `./run_stage3_tests.sh`
 - Shell script syntax checks
 - `./run_live_plex_smoke.sh --help` sanity check
 

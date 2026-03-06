@@ -15,6 +15,13 @@
 
 ## Commands
 
+Run Stage 3 workflow tests directly:
+
+```bash
+cd /Users/sutherland/repo
+./run_stage3_tests.sh
+```
+
 Run full release prep (includes build):
 
 ```bash
