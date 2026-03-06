@@ -8,6 +8,13 @@ struct PlexServerIdentity {
     let machineIdentifier: String
 }
 
+struct PlexLibrarySection: Identifiable {
+    let id: String
+    let key: String
+    let title: String
+    let type: String
+}
+
 private final class PlexIdentityXMLParserDelegate: NSObject, XMLParserDelegate {
     var identity: PlexServerIdentity?
 
@@ -24,6 +31,35 @@ private final class PlexIdentityXMLParserDelegate: NSObject, XMLParserDelegate {
         let version = attributeDict["version"] ?? "Unknown"
         let machineId = attributeDict["machineIdentifier"] ?? "Unknown"
         identity = PlexServerIdentity(friendlyName: name, version: version, machineIdentifier: machineId)
+    }
+}
+
+private final class PlexSectionsXMLParserDelegate: NSObject, XMLParserDelegate {
+    var sections: [PlexLibrarySection] = []
+
+    func parser(
+        _ parser: XMLParser,
+        didStartElement elementName: String,
+        namespaceURI: String?,
+        qualifiedName qName: String?,
+        attributes attributeDict: [String: String] = [:]
+    ) {
+        guard elementName == "Directory" else { return }
+
+        guard let key = attributeDict["key"],
+              let title = attributeDict["title"],
+              let type = attributeDict["type"] else {
+            return
+        }
+
+        sections.append(
+            PlexLibrarySection(
+                id: key,
+                key: key,
+                title: title,
+                type: type
+            )
+        )
     }
 }
 
@@ -116,6 +152,10 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
     @Published var plexServerVersion: String = ""
     @Published var plexServerMachineIdentifier: String = ""
     @Published var isTestingPlexConnection = false
+    @Published var plexLibrarySections: [PlexLibrarySection] = []
+    @Published var selectedPlexTVSectionKey: String = ""
+    @Published var selectedPlexMovieSectionKey: String = ""
+    @Published var isLoadingPlexSections = false
     @Published var statusMessage: String = "" {
         didSet {
             logBatchStatusIfNeeded(statusMessage)
@@ -297,7 +337,8 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
             episodeIds: [episodeId],
             tmdbStartSeasonNumber: seasonNumber,
             tmdbStartEpisodeNumber: episodeNumber,
-            tmdbShowIdOrURL: nil
+            tmdbShowIdOrURL: nil,
+            autoLockInPlex: false
         )
     }
 
@@ -305,7 +346,8 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
         episodeIds: [Int],
         tmdbStartSeasonNumber: Int,
         tmdbStartEpisodeNumber: Int,
-        tmdbShowIdOrURL: String?
+        tmdbShowIdOrURL: String?,
+        autoLockInPlex: Bool = false
     ) {
         let options = EpisodeRemapOptions(
             updateTitle: true,
@@ -321,7 +363,8 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
             targetSeasonNumber: tmdbStartSeasonNumber,
             startEpisodeNumber: tmdbStartEpisodeNumber,
             options: options,
-            tmdbShowIdOrURL: tmdbShowIdOrURL
+            tmdbShowIdOrURL: tmdbShowIdOrURL,
+            autoLockInPlex: autoLockInPlex
         )
     }
 
@@ -624,7 +667,8 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
         targetSeasonNumber: Int,
         startEpisodeNumber: Int,
         options: EpisodeRemapOptions,
-        tmdbShowIdOrURL: String? = nil
+        tmdbShowIdOrURL: String? = nil,
+        autoLockInPlex: Bool = false
     ) {
         guard selectedShowId > 0 else {
             statusMessage = "Select a show first"
@@ -679,6 +723,7 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
                 var missingPlexSeasonCount = 0
                 var createdPlexSeasonCount = 0
                 var firstUpdatedSeasonId: Int?
+                var updatedEpisodeIds: [Int] = []
                 var plexSeasonIdCache: [Int: Int] = [:]
                 var seasonPosterUpdatedSeasonIds: Set<Int> = []
                 var seasonPosterUpdatedCount = 0
@@ -797,6 +842,7 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
 
                     if remapped {
                         updatedCount += 1
+                        updatedEpisodeIds.append(episodeId)
                         if firstUpdatedSeasonId == nil {
                             firstUpdatedSeasonId = mappedSeasonId
                         }
@@ -816,6 +862,9 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
                     let createdSeasonSuffix = createdPlexSeasonCount > 0 ? " Created Plex season(s): \(createdPlexSeasonCount)." : ""
                     let seasonPosterSuffix = seasonPosterUpdatedCount > 0 ? " Season poster(s) updated: \(seasonPosterUpdatedCount)." : ""
                     self.statusMessage = "Remapped \(updatedCount) episode(s). TMDB matched \(tmdbMatchedCount). Skipped \(skippedCount).\(createdSeasonSuffix)\(seasonPosterSuffix)\(missingSeasonSuffix)\(backupSuffix)"
+                    if autoLockInPlex, !updatedEpisodeIds.isEmpty {
+                        self.lockAllPlexMetadata(itemIds: updatedEpisodeIds, entityLabel: "episode")
+                    }
                 }
             } catch {
                 DispatchQueue.main.async {
@@ -1392,6 +1441,8 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
             let normalizedServerURL = normalizePlexServerURL(savedServerURL)
             self.plexServerURL = normalizedServerURL
             self.plexToken = settings.plexToken ?? ""
+            self.selectedPlexTVSectionKey = settings.selectedPlexTVSectionKey ?? ""
+            self.selectedPlexMovieSectionKey = settings.selectedPlexMovieSectionKey ?? ""
             if normalizedServerURL != savedServerURL {
                 migratedSettings = true
             }
@@ -1402,6 +1453,8 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
             self.plexDbPath = defaultPlexDbPath
             self.plexServerURL = "http://127.0.0.1:32400"
             self.plexToken = ""
+            self.selectedPlexTVSectionKey = ""
+            self.selectedPlexMovieSectionKey = ""
         }
 
         if migratedSettings {
@@ -1425,7 +1478,9 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
             plexSqlitePath: plexSqlitePath,
             plexDbPath: self.plexDbPath,
             plexServerURL: self.plexServerURL,
-            plexToken: plexToken.trimmingCharacters(in: .whitespacesAndNewlines)
+            plexToken: plexToken.trimmingCharacters(in: .whitespacesAndNewlines),
+            selectedPlexTVSectionKey: selectedPlexTVSectionKey,
+            selectedPlexMovieSectionKey: selectedPlexMovieSectionKey
         )
         if let encoded = try? JSONEncoder().encode(settings) {
             UserDefaults.standard.set(encoded, forKey: "PlexTVEditorSettings")
@@ -1482,6 +1537,143 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
                     self.plexConnectionSummary = "Connection failed"
                     self.statusMessage = "✗ Plex API test failed: \(error.localizedDescription)"
                 }
+            }
+        }
+    }
+
+    func loadPlexLibrarySections() {
+        let normalizedServerURL = normalizePlexServerURL(plexServerURL)
+        guard !normalizedServerURL.isEmpty,
+              let serverURL = URL(string: normalizedServerURL) else {
+            statusMessage = "Enter a valid Plex server URL"
+            return
+        }
+
+        let token = plexToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !token.isEmpty else {
+            statusMessage = "Enter Plex token before loading sections"
+            return
+        }
+
+        isLoadingPlexSections = true
+
+        Task {
+            do {
+                let sections = try await fetchPlexLibrarySections(baseURL: serverURL, token: token)
+                DispatchQueue.main.async {
+                    self.isLoadingPlexSections = false
+                    self.plexLibrarySections = sections
+
+                    if let firstTV = sections.first(where: { $0.type == "show" }),
+                       (self.selectedPlexTVSectionKey.isEmpty || !sections.contains(where: { $0.key == self.selectedPlexTVSectionKey })) {
+                        self.selectedPlexTVSectionKey = firstTV.key
+                    }
+
+                    if let firstMovie = sections.first(where: { $0.type == "movie" }),
+                       (self.selectedPlexMovieSectionKey.isEmpty || !sections.contains(where: { $0.key == self.selectedPlexMovieSectionKey })) {
+                        self.selectedPlexMovieSectionKey = firstMovie.key
+                    }
+
+                    self.statusMessage = "Loaded \(sections.count) Plex library section(s)"
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self.isLoadingPlexSections = false
+                    self.statusMessage = "Failed to load Plex sections: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    func refreshPlexMetadata(itemIds: [Int], entityLabel: String) {
+        let normalizedServerURL = normalizePlexServerURL(plexServerURL)
+        guard !normalizedServerURL.isEmpty,
+              let serverURL = URL(string: normalizedServerURL) else {
+            statusMessage = "Enter a valid Plex server URL"
+            return
+        }
+
+        let token = plexToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !token.isEmpty else {
+            statusMessage = "Enter Plex token before refreshing metadata"
+            return
+        }
+
+        let uniqueIds = Array(Set(itemIds)).sorted()
+        guard !uniqueIds.isEmpty else {
+            statusMessage = "Select at least one \(entityLabel) to refresh"
+            return
+        }
+
+        statusMessage = "Queueing Plex refresh for \(uniqueIds.count) \(entityLabel)(s)..."
+
+        Task {
+            var successCount = 0
+            var failureCount = 0
+
+            for id in uniqueIds {
+                do {
+                    try await queuePlexMetadataRefresh(baseURL: serverURL, token: token, itemId: id)
+                    successCount += 1
+                } catch {
+                    failureCount += 1
+                }
+            }
+
+            DispatchQueue.main.async {
+                self.statusMessage = "Plex refresh queued: \(successCount) succeeded, \(failureCount) failed"
+            }
+        }
+    }
+
+    func lockAllPlexMetadata(itemIds: [Int], entityLabel: String) {
+        setPlexMetadataLockState(itemIds: itemIds, entityLabel: entityLabel, isLocked: true)
+    }
+
+    func unlockAllPlexMetadata(itemIds: [Int], entityLabel: String) {
+        setPlexMetadataLockState(itemIds: itemIds, entityLabel: entityLabel, isLocked: false)
+    }
+
+    private func setPlexMetadataLockState(itemIds: [Int], entityLabel: String, isLocked: Bool) {
+        let normalizedServerURL = normalizePlexServerURL(plexServerURL)
+        guard !normalizedServerURL.isEmpty,
+              let serverURL = URL(string: normalizedServerURL) else {
+            statusMessage = "Enter a valid Plex server URL"
+            return
+        }
+
+        let token = plexToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !token.isEmpty else {
+            statusMessage = "Enter Plex token before updating metadata lock"
+            return
+        }
+
+        let uniqueIds = Array(Set(itemIds)).sorted()
+        guard !uniqueIds.isEmpty else {
+            statusMessage = "Select at least one \(entityLabel) to update metadata lock"
+            return
+        }
+
+        let lockFields = plexLockFieldNames(for: entityLabel)
+        let actionWord = isLocked ? "Locking" : "Unlocking"
+        statusMessage = "\(actionWord) Plex metadata for \(uniqueIds.count) \(entityLabel)(s)..."
+
+        Task {
+            var successCount = 0
+            var failureCount = 0
+
+            for id in uniqueIds {
+                do {
+                    try await queuePlexMetadataLock(baseURL: serverURL, token: token, itemId: id, lockFields: lockFields, isLocked: isLocked)
+                    successCount += 1
+                } catch {
+                    failureCount += 1
+                }
+            }
+
+            DispatchQueue.main.async {
+                let pastTense = isLocked ? "locked" : "unlocked"
+                self.statusMessage = "Plex metadata \(pastTense): \(successCount) succeeded, \(failureCount) failed"
             }
         }
     }
@@ -1583,6 +1775,161 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
         }
 
         return identity
+    }
+
+    private func fetchPlexLibrarySections(baseURL: URL, token: String) async throws -> [PlexLibrarySection] {
+        var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
+        components?.path = "/library/sections"
+        components?.queryItems = [
+            URLQueryItem(name: "X-Plex-Token", value: token)
+        ]
+
+        guard let url = components?.url else {
+            throw URLError(.badURL)
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 12
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw URLError(.badServerResponse)
+        }
+
+        guard (200...299).contains(httpResponse.statusCode) else {
+            throw NSError(
+                domain: "PlexTVEditor",
+                code: httpResponse.statusCode,
+                userInfo: [NSLocalizedDescriptionKey: "Plex API returned HTTP \(httpResponse.statusCode)"]
+            )
+        }
+
+        let delegate = PlexSectionsXMLParserDelegate()
+        let parser = XMLParser(data: data)
+        parser.delegate = delegate
+
+        guard parser.parse() else {
+            throw NSError(
+                domain: "PlexTVEditor",
+                code: 4,
+                userInfo: [NSLocalizedDescriptionKey: "Could not parse Plex library sections response"]
+            )
+        }
+
+        return delegate.sections
+    }
+
+    private func queuePlexMetadataRefresh(baseURL: URL, token: String, itemId: Int) async throws {
+        var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
+        components?.path = "/library/metadata/\(itemId)/refresh"
+        components?.queryItems = [
+            URLQueryItem(name: "X-Plex-Token", value: token)
+        ]
+
+        guard let url = components?.url else {
+            throw URLError(.badURL)
+        }
+
+        func runRequest(method: String) async throws -> HTTPURLResponse {
+            var request = URLRequest(url: url)
+            request.httpMethod = method
+            request.timeoutInterval = 12
+            let (_, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                throw URLError(.badServerResponse)
+            }
+            return http
+        }
+
+        let putResponse = try await runRequest(method: "PUT")
+        if (200...299).contains(putResponse.statusCode) {
+            return
+        }
+
+        // Some Plex endpoints accept GET for refresh on specific versions.
+        let getResponse = try await runRequest(method: "GET")
+        guard (200...299).contains(getResponse.statusCode) else {
+            throw NSError(
+                domain: "PlexTVEditor",
+                code: getResponse.statusCode,
+                userInfo: [NSLocalizedDescriptionKey: "Metadata refresh failed for id \(itemId)"]
+            )
+        }
+    }
+
+    private func queuePlexMetadataLock(baseURL: URL, token: String, itemId: Int, lockFields: [String], isLocked: Bool) async throws {
+        var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
+        components?.path = "/library/metadata/\(itemId)"
+
+        let lockValue = isLocked ? "1" : "0"
+        var queryItems: [URLQueryItem] = [
+            URLQueryItem(name: "X-Plex-Token", value: token)
+        ]
+        queryItems.append(contentsOf: lockFields.map { URLQueryItem(name: "\($0).locked", value: lockValue) })
+        components?.queryItems = queryItems
+
+        guard let url = components?.url else {
+            throw URLError(.badURL)
+        }
+
+        func runRequest(method: String) async throws -> HTTPURLResponse {
+            var request = URLRequest(url: url)
+            request.httpMethod = method
+            request.timeoutInterval = 12
+            let (_, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                throw URLError(.badServerResponse)
+            }
+            return http
+        }
+
+        let putResponse = try await runRequest(method: "PUT")
+        if (200...299).contains(putResponse.statusCode) {
+            return
+        }
+
+        // Some Plex deployments accept POST for metadata update endpoints.
+        let postResponse = try await runRequest(method: "POST")
+        guard (200...299).contains(postResponse.statusCode) else {
+            throw NSError(
+                domain: "PlexTVEditor",
+                code: postResponse.statusCode,
+                userInfo: [NSLocalizedDescriptionKey: "Metadata lock failed for id \(itemId)"]
+            )
+        }
+    }
+
+    private func plexLockFieldNames(for entityLabel: String) -> [String] {
+        let commonFields = [
+            "title",
+            "titleSort",
+            "summary",
+            "originallyAvailableAt",
+            "rating",
+            "audienceRating",
+            "userRating",
+            "thumb",
+            "art",
+            "genre",
+            "collection",
+            "label",
+            "writer",
+            "director"
+        ]
+
+        if entityLabel.lowercased().contains("movie") {
+            return commonFields + [
+                "tagline",
+                "studio",
+                "contentRating",
+                "year",
+                "originalTitle",
+                "country"
+            ]
+        }
+
+        return commonFields
     }
 
     private func normalizePlexDbPath(_ path: String) -> String {
@@ -2106,4 +2453,6 @@ struct Settings: Codable {
     let plexDbPath: String
     let plexServerURL: String?
     let plexToken: String?
+    let selectedPlexTVSectionKey: String?
+    let selectedPlexMovieSectionKey: String?
 }

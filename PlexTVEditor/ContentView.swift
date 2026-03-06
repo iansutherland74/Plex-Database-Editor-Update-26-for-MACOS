@@ -660,7 +660,8 @@ struct EpisodesSection_New: View {
                                         episodeIds: orderedIds,
                                         tmdbStartSeasonNumber: mapping.season,
                                         tmdbStartEpisodeNumber: mapping.episode,
-                                        tmdbShowIdOrURL: manualTMDBShowRef
+                                        tmdbShowIdOrURL: manualTMDBShowRef,
+                                        autoLockInPlex: true
                                     )
                                     manualEditSeasonNumber = String(mapping.season)
                                     manualEditEpisodeNumber = String(mapping.episode)
@@ -725,7 +726,46 @@ struct EpisodesSection_New: View {
                                 Spacer()
                             }
 
-                            Text("TV Metadata applies TMDB metadata and numbering. Smart Thumb Season keeps the same season/episode numbers and refreshes artwork metadata only.")
+                            HStack(spacing: 10) {
+                                UserFriendlyActionButton(
+                                    title: "Refresh in Plex",
+                                    icon: "arrow.triangle.2.circlepath",
+                                    role: .secondary,
+                                    disabled: viewModel.episodes.isEmpty
+                                ) {
+                                    let orderedIds = orderedActionEpisodeIds()
+                                    viewModel.refreshPlexMetadata(itemIds: orderedIds, entityLabel: "episode")
+                                }
+                                .frame(width: 210)
+                                .keyboardShortcut("f", modifiers: [.command, .option])
+
+                                UserFriendlyActionButton(
+                                    title: "Lock All Metadata",
+                                    icon: "lock.fill",
+                                    role: .secondary,
+                                    disabled: viewModel.episodes.isEmpty
+                                ) {
+                                    let orderedIds = orderedActionEpisodeIds()
+                                    viewModel.lockAllPlexMetadata(itemIds: orderedIds, entityLabel: "episode")
+                                }
+                                .frame(width: 210)
+                                .keyboardShortcut("l", modifiers: [.command, .option])
+
+                                UserFriendlyActionButton(
+                                    title: "Unlock Metadata",
+                                    icon: "lock.open.fill",
+                                    role: .secondary,
+                                    disabled: viewModel.episodes.isEmpty
+                                ) {
+                                    let orderedIds = orderedActionEpisodeIds()
+                                    viewModel.unlockAllPlexMetadata(itemIds: orderedIds, entityLabel: "episode")
+                                }
+                                .frame(width: 210)
+
+                                Spacer()
+                            }
+
+                            Text("TV Metadata applies TMDB metadata and numbering, then auto-locks updated episodes in Plex. Smart Thumb Season keeps the same season/episode numbers and refreshes artwork metadata only. Lock/Unlock controls apply Plex lock flags to selected fields.")
                                 .font(.system(size: 11))
                                 .foregroundColor(.plexTextSecondary)
                         }
@@ -1443,6 +1483,30 @@ struct MoviesDetailView_New: View {
                                     _ = viewModel.detect3DAndApplyMovies(forMovieIds: Array(selectedMovieIds))
                                     selectedMovieIds.removeAll()
                                 }
+
+                                ActionButton(
+                                    title: "Refresh in Plex",
+                                    icon: "arrow.triangle.2.circlepath",
+                                    disabled: selectedMovieIds.isEmpty
+                                ) {
+                                    viewModel.refreshPlexMetadata(itemIds: Array(selectedMovieIds), entityLabel: "movie")
+                                }
+
+                                ActionButton(
+                                    title: "Lock All Metadata",
+                                    icon: "lock.fill",
+                                    disabled: selectedMovieIds.isEmpty
+                                ) {
+                                    viewModel.lockAllPlexMetadata(itemIds: Array(selectedMovieIds), entityLabel: "movie")
+                                }
+
+                                ActionButton(
+                                    title: "Unlock Metadata",
+                                    icon: "lock.open.fill",
+                                    disabled: selectedMovieIds.isEmpty
+                                ) {
+                                    viewModel.unlockAllPlexMetadata(itemIds: Array(selectedMovieIds), entityLabel: "movie")
+                                }
                             }
                             
                             HStack {
@@ -1610,6 +1674,11 @@ struct SettingsView_New: View {
                             ActionButton(title: "Test Plex API", icon: "network", disabled: viewModel.isTestingPlexConnection) {
                                 viewModel.testPlexAPIConnection()
                             }
+
+                            ActionButton(title: "Load Plex Sections", icon: "books.vertical", disabled: viewModel.isLoadingPlexSections) {
+                                viewModel.loadPlexLibrarySections()
+                            }
+                            .keyboardShortcut("l", modifiers: [.command, .option])
                             
                             ActionButton(title: "Reload Library", icon: "arrow.clockwise", disabled: false) {
                                 viewModel.loadShows()
@@ -1623,6 +1692,16 @@ struct SettingsView_New: View {
                                 ProgressView()
                                     .progressViewStyle(CircularProgressViewStyle(tint: .plexOrange))
                                 Text("Testing Plex API...")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(.plexTextSecondary)
+                            }
+                        }
+
+                        if viewModel.isLoadingPlexSections {
+                            HStack(spacing: 8) {
+                                ProgressView()
+                                    .progressViewStyle(CircularProgressViewStyle(tint: .plexOrange))
+                                Text("Loading Plex library sections...")
                                     .font(.system(size: 12))
                                     .foregroundColor(.plexTextSecondary)
                             }
@@ -1645,6 +1724,49 @@ struct SettingsView_New: View {
                                         .font(.system(size: 11))
                                         .foregroundColor(.plexTextSecondary)
                                         .lineLimit(1)
+                                }
+                            }
+                            .padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.plexLightGray.opacity(0.25))
+                            .cornerRadius(8)
+                        }
+
+                        if !viewModel.plexLibrarySections.isEmpty {
+                            let tvSections = viewModel.plexLibrarySections.filter { $0.type == "show" }
+                            let movieSections = viewModel.plexLibrarySections.filter { $0.type == "movie" }
+
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Plex Library Sections")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundColor(.plexTextPrimary)
+
+                                HStack(spacing: 10) {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text("TV Section")
+                                            .font(.system(size: 11))
+                                            .foregroundColor(.plexTextSecondary)
+
+                                        Picker("TV Section", selection: $viewModel.selectedPlexTVSectionKey) {
+                                            ForEach(tvSections, id: \.id) { section in
+                                                Text(section.title).tag(section.key)
+                                            }
+                                        }
+                                        .frame(width: 260)
+                                    }
+
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text("Movie Section")
+                                            .font(.system(size: 11))
+                                            .foregroundColor(.plexTextSecondary)
+
+                                        Picker("Movie Section", selection: $viewModel.selectedPlexMovieSectionKey) {
+                                            ForEach(movieSections, id: \.id) { section in
+                                                Text(section.title).tag(section.key)
+                                            }
+                                        }
+                                        .frame(width: 260)
+                                    }
                                 }
                             }
                             .padding(10)
