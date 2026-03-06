@@ -29,6 +29,13 @@ cd /Users/sutherland/repo
 ./run_stage4_tests.sh
 ```
 
+Run Stage 5 tooling contract tests directly:
+
+```bash
+cd /Users/sutherland/repo
+./run_stage5_tests.sh
+```
+
 Run full release prep (includes build):
 
 ```bash
