@@ -32,3 +32,9 @@ jobs:
             PlexDatabaseManager.swift \
             TMDBClient.swift \
             -o /tmp/PlexTVEditor-ci-check
+
+      - name: Run Dry-Run Logic Tests
+        run: |
+          set -e
+          chmod +x ./run_dry_run_tests.sh
+          ./run_dry_run_tests.sh
