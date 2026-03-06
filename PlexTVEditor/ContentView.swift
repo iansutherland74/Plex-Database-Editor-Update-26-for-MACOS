@@ -1922,6 +1922,16 @@ struct DryRunPreviewSheet: View {
     @ObservedObject var viewModel: PlexTVEditorViewModel
     let onClose: () -> Void
     @State private var confirmApplyDryRun = false
+    @State private var showChangesOnly = true
+
+    private var visibleDryRunRows: [DryRunDiffRow] {
+        guard showChangesOnly else { return viewModel.dryRunRows }
+        return viewModel.dryRunRows.filter { hasMeaningfulChange($0) }
+    }
+
+    private var changedCount: Int {
+        viewModel.dryRunRows.filter { hasMeaningfulChange($0) }.count
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1947,6 +1957,20 @@ struct DryRunPreviewSheet: View {
                     .font(.system(size: 12))
                     .foregroundColor(.plexTextSecondary)
 
+                if !viewModel.dryRunRows.isEmpty {
+                    HStack(spacing: 10) {
+                        Toggle("Changes Only", isOn: $showChangesOnly)
+                            .font(.system(size: 12))
+                            .toggleStyle(SwitchToggleStyle(tint: .plexOrange))
+
+                        Text("Changed: \(changedCount)/\(viewModel.dryRunRows.count)")
+                            .font(.system(size: 11))
+                            .foregroundColor(.plexTextSecondary)
+
+                        Spacer()
+                    }
+                }
+
                 if viewModel.isDryRunLoading {
                     HStack(spacing: 10) {
                         ProgressView()
@@ -1961,10 +1985,15 @@ struct DryRunPreviewSheet: View {
                         .font(.system(size: 12))
                         .foregroundColor(.plexTextSecondary)
                         .padding(.vertical, 10)
+                } else if visibleDryRunRows.isEmpty {
+                    Text("No changed rows match the current filter.")
+                        .font(.system(size: 12))
+                        .foregroundColor(.plexTextSecondary)
+                        .padding(.vertical, 10)
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 8) {
-                            ForEach(viewModel.dryRunRows) { row in
+                            ForEach(visibleDryRunRows) { row in
                                 VStack(alignment: .leading, spacing: 4) {
                                     HStack {
                                         Text("#\(row.episodeId)")
@@ -2047,6 +2076,14 @@ struct DryRunPreviewSheet: View {
                 secondaryButton: .cancel()
             )
         }
+    }
+
+    private func hasMeaningfulChange(_ row: DryRunDiffRow) -> Bool {
+        if row.currentCode != row.mappedCode { return true }
+        if row.currentTitle != row.mappedTitle { return true }
+        if row.currentAirDate != row.mappedAirDate { return true }
+        if row.mappedCode == "Skipped" { return true }
+        return row.note.lowercased().contains("missing")
     }
 }
 
