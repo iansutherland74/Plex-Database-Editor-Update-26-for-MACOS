@@ -156,6 +156,7 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
     @Published var selectedPlexTVSectionKey: String = ""
     @Published var selectedPlexMovieSectionKey: String = ""
     @Published var isLoadingPlexSections = false
+    @Published var isRefreshingPlexSection = false
     @Published var statusMessage: String = "" {
         didSet {
             logBatchStatusIfNeeded(statusMessage)
@@ -1626,6 +1627,45 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
         }
     }
 
+    func refreshSelectedPlexSection(sectionKey: String, sectionLabel: String) {
+        let normalizedServerURL = normalizePlexServerURL(plexServerURL)
+        guard !normalizedServerURL.isEmpty,
+              let serverURL = URL(string: normalizedServerURL) else {
+            statusMessage = "Enter a valid Plex server URL"
+            return
+        }
+
+        let token = plexToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !token.isEmpty else {
+            statusMessage = "Enter Plex token before refreshing section"
+            return
+        }
+
+        let trimmedSectionKey = sectionKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedSectionKey.isEmpty else {
+            statusMessage = "Select a Plex section before refreshing"
+            return
+        }
+
+        isRefreshingPlexSection = true
+        statusMessage = "Queueing Plex refresh for \(sectionLabel)..."
+
+        Task {
+            do {
+                try await queuePlexSectionRefresh(baseURL: serverURL, token: token, sectionKey: trimmedSectionKey)
+                DispatchQueue.main.async {
+                    self.isRefreshingPlexSection = false
+                    self.statusMessage = "Plex section refresh queued for \(sectionLabel)"
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self.isRefreshingPlexSection = false
+                    self.statusMessage = "Section refresh failed for \(sectionLabel): \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
     func lockAllPlexMetadata(itemIds: [Int], entityLabel: String) {
         setPlexMetadataLockState(itemIds: itemIds, entityLabel: entityLabel, isLocked: true)
     }
@@ -1854,6 +1894,43 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
                 domain: "PlexTVEditor",
                 code: getResponse.statusCode,
                 userInfo: [NSLocalizedDescriptionKey: "Metadata refresh failed for id \(itemId)"]
+            )
+        }
+    }
+
+    private func queuePlexSectionRefresh(baseURL: URL, token: String, sectionKey: String) async throws {
+        var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
+        components?.path = "/library/sections/\(sectionKey)/refresh"
+        components?.queryItems = [
+            URLQueryItem(name: "X-Plex-Token", value: token)
+        ]
+
+        guard let url = components?.url else {
+            throw URLError(.badURL)
+        }
+
+        func runRequest(method: String) async throws -> HTTPURLResponse {
+            var request = URLRequest(url: url)
+            request.httpMethod = method
+            request.timeoutInterval = 15
+            let (_, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                throw URLError(.badServerResponse)
+            }
+            return http
+        }
+
+        let putResponse = try await runRequest(method: "PUT")
+        if (200...299).contains(putResponse.statusCode) {
+            return
+        }
+
+        let getResponse = try await runRequest(method: "GET")
+        guard (200...299).contains(getResponse.statusCode) else {
+            throw NSError(
+                domain: "PlexTVEditor",
+                code: getResponse.statusCode,
+                userInfo: [NSLocalizedDescriptionKey: "Section refresh failed for section \(sectionKey)"]
             )
         }
     }

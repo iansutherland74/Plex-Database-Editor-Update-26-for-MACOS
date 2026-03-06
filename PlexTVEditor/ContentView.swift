@@ -1768,6 +1768,42 @@ struct SettingsView_New: View {
                                         .frame(width: 260)
                                     }
                                 }
+
+                                HStack(spacing: 12) {
+                                    ActionButton(
+                                        title: "Refresh TV Section",
+                                        icon: "arrow.triangle.2.circlepath",
+                                        disabled: viewModel.selectedPlexTVSectionKey.isEmpty || viewModel.isRefreshingPlexSection
+                                    ) {
+                                        let label = tvSections.first(where: { $0.key == viewModel.selectedPlexTVSectionKey })?.title ?? "TV section"
+                                        viewModel.refreshSelectedPlexSection(
+                                            sectionKey: viewModel.selectedPlexTVSectionKey,
+                                            sectionLabel: label
+                                        )
+                                    }
+
+                                    ActionButton(
+                                        title: "Refresh Movie Section",
+                                        icon: "arrow.triangle.2.circlepath",
+                                        disabled: viewModel.selectedPlexMovieSectionKey.isEmpty || viewModel.isRefreshingPlexSection
+                                    ) {
+                                        let label = movieSections.first(where: { $0.key == viewModel.selectedPlexMovieSectionKey })?.title ?? "Movie section"
+                                        viewModel.refreshSelectedPlexSection(
+                                            sectionKey: viewModel.selectedPlexMovieSectionKey,
+                                            sectionLabel: label
+                                        )
+                                    }
+                                }
+
+                                if viewModel.isRefreshingPlexSection {
+                                    HStack(spacing: 8) {
+                                        ProgressView()
+                                            .progressViewStyle(CircularProgressViewStyle(tint: .plexOrange))
+                                        Text("Queueing Plex section refresh...")
+                                            .font(.system(size: 12))
+                                            .foregroundColor(.plexTextSecondary)
+                                    }
+                                }
                             }
                             .padding(10)
                             .frame(maxWidth: .infinity, alignment: .leading)
