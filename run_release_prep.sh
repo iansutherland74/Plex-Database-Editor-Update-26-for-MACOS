@@ -18,6 +18,13 @@ REPORT_PATH="docs/release_prep_report_$(date +%Y%m%d_%H%M%S).md"
 RUN_RELEASE_NOTES=1
 RELEASE_NOTES_ARGS=()
 RELEASE_NOTES_PATH=""
+QUIET=0
+
+log() {
+    if [ "$QUIET" -eq 0 ]; then
+        echo "$*"
+    fi
+}
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -82,6 +89,10 @@ while [ $# -gt 0 ]; do
             RELEASE_NOTES_ARGS+=("--title" "$2")
             shift 2
             ;;
+        --quiet|-q)
+            QUIET=1
+            shift
+            ;;
         --help|-h)
             cat <<'HELP'
 Usage: ./run_release_prep.sh [options]
@@ -97,11 +108,13 @@ Options:
   --notes-to-ref <ref>   Forwarded to release notes generator --to-ref
   --notes-output <path>  Forwarded to release notes generator --output
   --notes-title <title>  Forwarded to release notes generator --title
+    --quiet, -q            Reduce progress output
   --help               Show this help
 
 Examples:
   ./run_release_prep.sh
   ./run_release_prep.sh --skip-build
+    ./run_release_prep.sh --skip-build --quiet
   ./run_release_prep.sh --skip-build --notes-from-tag v1.0.0
   ./run_release_prep.sh --skip-build --include-live-smoke
   ./run_release_prep.sh --skip-quality-gate --report docs/manual_release_report.md
@@ -117,8 +130,8 @@ done
 
 mkdir -p "$(dirname "$REPORT_PATH")"
 
-echo "[release-prep] Starting release prep workflow"
-echo "[release-prep] Report path: $REPORT_PATH"
+log "[release-prep] Starting release prep workflow"
+log "[release-prep] Report path: $REPORT_PATH"
 
 DATE_UTC="$(date -u +"%Y-%m-%d %H:%M:%SZ")"
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
@@ -135,20 +148,24 @@ NOTES_EXIT=0
 NOTES_OUTPUT="(release notes generation skipped)"
 
 if [ "$RUN_QUALITY_GATE" -eq 1 ]; then
-    echo "[release-prep] Running quality gate..."
-    set +e
+    log "[release-prep] Running quality gate..."
+    quality_gate_cmd=(./run_quality_gate.sh)
     if [ "${#QUALITY_GATE_ARGS[@]}" -gt 0 ]; then
-        QUALITY_OUTPUT="$(./run_quality_gate.sh "${QUALITY_GATE_ARGS[@]}" 2>&1)"
-    else
-        QUALITY_OUTPUT="$(./run_quality_gate.sh 2>&1)"
+        quality_gate_cmd+=("${QUALITY_GATE_ARGS[@]}")
     fi
+    if [ "$QUIET" -eq 1 ]; then
+        quality_gate_cmd+=("--quiet")
+    fi
+
+    set +e
+    QUALITY_OUTPUT="$("${quality_gate_cmd[@]}" 2>&1)"
     QUALITY_EXIT=$?
     set -e
-    echo "[release-prep] Quality gate finished (exit=${QUALITY_EXIT}, elapsed=$(elapsed_seconds)s)"
+    log "[release-prep] Quality gate finished (exit=${QUALITY_EXIT}, elapsed=$(elapsed_seconds)s)"
 fi
 
 if [ "$RUN_RELEASE_NOTES" -eq 1 ]; then
-    echo "[release-prep] Generating release notes..."
+    log "[release-prep] Generating release notes..."
     set +e
     if [ "${#RELEASE_NOTES_ARGS[@]}" -gt 0 ]; then
         NOTES_OUTPUT="$(./generate_release_notes.sh "${RELEASE_NOTES_ARGS[@]}" 2>&1)"
@@ -157,7 +174,7 @@ if [ "$RUN_RELEASE_NOTES" -eq 1 ]; then
     fi
     NOTES_EXIT=$?
     set -e
-    echo "[release-prep] Release notes finished (exit=${NOTES_EXIT}, elapsed=$(elapsed_seconds)s)"
+    log "[release-prep] Release notes finished (exit=${NOTES_EXIT}, elapsed=$(elapsed_seconds)s)"
 
     if [ "$NOTES_EXIT" -eq 0 ] && [ -z "$RELEASE_NOTES_PATH" ]; then
         RELEASE_NOTES_PATH="$(printf '%s\n' "$NOTES_OUTPUT" | sed -n 's/^Wrote release notes: //p' | tail -n 1)"
@@ -206,7 +223,7 @@ RECENT_COMMITS="$(git --no-pager log --oneline -n 12)"
 } > "$REPORT_PATH"
 
 echo "Wrote release prep report: $REPORT_PATH"
-echo "[release-prep] Completed in $(elapsed_seconds)s"
+log "[release-prep] Completed in $(elapsed_seconds)s"
 
 if [ "$QUALITY_EXIT" -ne 0 ]; then
     echo "Release prep failed because quality gate failed"

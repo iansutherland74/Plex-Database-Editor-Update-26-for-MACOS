@@ -20,6 +20,7 @@ RUN_SHELL_LINT=1
 RUN_SMOKE_HELP=1
 RUN_LIVE_SMOKE=0
 LIVE_INCLUDE_WRITE=0
+QUIET=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -88,6 +89,10 @@ while [ $# -gt 0 ]; do
             LIVE_INCLUDE_WRITE=1
             shift
             ;;
+        --quiet|-q)
+            QUIET=1
+            shift
+            ;;
         --help|-h)
             cat <<'HELP'
 Usage: ./run_quality_gate.sh [options]
@@ -125,11 +130,13 @@ Options:
   --skip-smoke-help    Skip live smoke help sanity check
   --include-live-smoke Run live Plex smoke checks (read-only)
   --include-live-write Run live Plex smoke checks including non-destructive write queue checks
+    --quiet, -q          Reduce output (show step summaries and failure logs)
   --help               Show this help
 
 Examples:
   ./run_quality_gate.sh
   ./run_quality_gate.sh --skip-build
+    ./run_quality_gate.sh --skip-build --quiet
   ./run_quality_gate.sh --include-live-smoke
   ./run_quality_gate.sh --include-live-write
 HELP
@@ -148,14 +155,39 @@ FAIL_COUNT=0
 run_step() {
     local label="$1"
     shift
+    local step_start step_end elapsed
+    step_start="$(date +%s)"
 
     echo "==> $label"
-    if "$@"; then
-        PASS_COUNT=$((PASS_COUNT + 1))
-        echo "PASS: $label"
+    if [ "$QUIET" -eq 1 ]; then
+        local step_log
+        step_log="$(mktemp /tmp/quality_gate_step.XXXXXX)"
+        if "$@" >"$step_log" 2>&1; then
+            PASS_COUNT=$((PASS_COUNT + 1))
+            step_end="$(date +%s)"
+            elapsed=$((step_end - step_start))
+            echo "PASS: $label (${elapsed}s)"
+            rm -f "$step_log"
+        else
+            FAIL_COUNT=$((FAIL_COUNT + 1))
+            step_end="$(date +%s)"
+            elapsed=$((step_end - step_start))
+            echo "FAIL: $label (${elapsed}s)"
+            cat "$step_log"
+            rm -f "$step_log"
+        fi
     else
-        FAIL_COUNT=$((FAIL_COUNT + 1))
-        echo "FAIL: $label"
+        if "$@"; then
+            PASS_COUNT=$((PASS_COUNT + 1))
+            step_end="$(date +%s)"
+            elapsed=$((step_end - step_start))
+            echo "PASS: $label (${elapsed}s)"
+        else
+            FAIL_COUNT=$((FAIL_COUNT + 1))
+            step_end="$(date +%s)"
+            elapsed=$((step_end - step_start))
+            echo "FAIL: $label (${elapsed}s)"
+        fi
     fi
     echo ""
 }

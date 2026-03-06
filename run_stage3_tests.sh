@@ -4,12 +4,59 @@ set -euo pipefail
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$PROJECT_DIR"
 
-START_TIME="$(date +%s)"
-echo "[stage3] Running Stage 3 workflow tests..."
+QUIET=0
 
-if bash ./tests/Stage3WorkflowTests.sh; then
+while [ $# -gt 0 ]; do
+	case "$1" in
+		--quiet|-q)
+			QUIET=1
+			shift
+			;;
+		--help|-h)
+			cat <<'HELP'
+Usage: ./run_stage3_tests.sh [--quiet]
+
+Options:
+  --quiet, -q  Reduce output; print full logs only on failure
+  --help       Show this help
+HELP
+			exit 0
+			;;
+		*)
+			echo "Unknown argument: $1"
+			exit 2
+			;;
+	esac
+done
+
+log() {
+	if [ "$QUIET" -eq 0 ]; then
+		echo "$*"
+	fi
+}
+
+run_stage_test() {
+	if [ "$QUIET" -eq 1 ]; then
+		local stage_log
+		stage_log="$(mktemp /tmp/stage3_tests.XXXXXX)"
+		if bash ./tests/Stage3WorkflowTests.sh >"$stage_log" 2>&1; then
+			rm -f "$stage_log"
+			return 0
+		fi
+		cat "$stage_log"
+		rm -f "$stage_log"
+		return 1
+	fi
+
+	bash ./tests/Stage3WorkflowTests.sh
+}
+
+START_TIME="$(date +%s)"
+log "[stage3] Running Stage 3 workflow tests..."
+
+if run_stage_test; then
 	END_TIME="$(date +%s)"
-	echo "[stage3] Completed in $((END_TIME - START_TIME))s"
+	log "[stage3] Completed in $((END_TIME - START_TIME))s"
 else
 	echo "[stage3] FAIL: Stage 3 workflow tests failed"
 	exit 1

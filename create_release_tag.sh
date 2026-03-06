@@ -22,6 +22,13 @@ INCLUDE_LIVE_SMOKE=0
 INCLUDE_LIVE_WRITE=0
 APPLY=0
 PUSH=0
+QUIET=0
+
+log() {
+    if [ "$QUIET" -eq 0 ]; then
+        echo "$*"
+    fi
+}
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -85,6 +92,10 @@ while [ $# -gt 0 ]; do
             PUSH=1
             shift
             ;;
+        --quiet|-q)
+            QUIET=1
+            shift
+            ;;
         --help|-h)
             cat <<'HELP'
 Usage: ./create_release_tag.sh --version <tag> [options]
@@ -106,10 +117,12 @@ Options:
   --include-live-write  Include live non-destructive write checks during prep
   --apply               Create annotated git tag (otherwise dry-run)
   --push                Push tag to origin (requires --apply)
+    --quiet, -q           Reduce progress output
   --help                Show this help
 
 Examples:
   ./create_release_tag.sh --version v1.0.1
+    ./create_release_tag.sh --version v1.0.1 --quiet
   ./create_release_tag.sh --version v1.0.1 --apply
   ./create_release_tag.sh --version v1.0.1 --apply --push
   ./create_release_tag.sh --version v1.0.1 --from-tag v1.0.0 --to-ref HEAD
@@ -128,7 +141,7 @@ if [ -z "$VERSION" ]; then
     exit 2
 fi
 
-echo "[release-tag] Starting release tag workflow for ${VERSION}"
+log "[release-tag] Starting release tag workflow for ${VERSION}"
 
 if ! printf '%s' "$VERSION" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$'; then
     echo "Version must look like vMAJOR.MINOR.PATCH (optional suffix allowed)"
@@ -160,7 +173,7 @@ if [ -n "$(git status --short)" ]; then
     exit 2
 fi
 
-echo "[release-tag] Preconditions satisfied (elapsed=$(elapsed_seconds)s)"
+log "[release-tag] Preconditions satisfied (elapsed=$(elapsed_seconds)s)"
 
 if [ -z "$FROM_TAG" ]; then
     FROM_TAG="$(git describe --tags --abbrev=0 "$TO_REF" 2>/dev/null || true)"
@@ -186,10 +199,10 @@ if [ -n "$FROM_TAG" ]; then
 fi
 
 "${notes_cmd[@]}"
-echo "[release-tag] Release notes generated (elapsed=$(elapsed_seconds)s)"
+log "[release-tag] Release notes generated (elapsed=$(elapsed_seconds)s)"
 
 if [ "$RUN_PREP" -eq 1 ]; then
-    echo "[release-tag] Running release prep checks..."
+    log "[release-tag] Running release prep checks..."
     prep_cmd=(
         ./run_release_prep.sh
         --skip-build
@@ -203,8 +216,12 @@ if [ "$RUN_PREP" -eq 1 ]; then
         prep_cmd+=(--include-live-smoke)
     fi
 
+    if [ "$QUIET" -eq 1 ]; then
+        prep_cmd+=(--quiet)
+    fi
+
     "${prep_cmd[@]}"
-    echo "[release-tag] Release prep finished (elapsed=$(elapsed_seconds)s)"
+    log "[release-tag] Release prep finished (elapsed=$(elapsed_seconds)s)"
 fi
 
 echo "Prepared release assets:"
@@ -215,7 +232,7 @@ fi
 
 if [ "$APPLY" -ne 1 ]; then
     echo "Dry-run complete. Tag not created. Use --apply to create tag $VERSION"
-    echo "[release-tag] Completed dry-run in $(elapsed_seconds)s"
+    log "[release-tag] Completed dry-run in $(elapsed_seconds)s"
     exit 0
 fi
 
@@ -239,12 +256,12 @@ git tag -a "$VERSION" "$TO_REF" -F "$TAG_MESSAGE_FILE"
 rm -f "$TAG_MESSAGE_FILE"
 
 echo "Created tag: $VERSION"
-echo "[release-tag] Tag created locally (elapsed=$(elapsed_seconds)s)"
+log "[release-tag] Tag created locally (elapsed=$(elapsed_seconds)s)"
 
 if [ "$PUSH" -eq 1 ]; then
     git push origin "$VERSION"
     echo "Pushed tag to origin: $VERSION"
-    echo "[release-tag] Remote push completed (elapsed=$(elapsed_seconds)s)"
+    log "[release-tag] Remote push completed (elapsed=$(elapsed_seconds)s)"
 fi
 
 exit 0

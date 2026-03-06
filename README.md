@@ -150,6 +150,9 @@ Common variants:
 
 # Include live non-destructive write queue checks
 ./run_quality_gate.sh --include-live-write
+
+# Reduce log volume (show step summaries + failure logs)
+./run_quality_gate.sh --skip-build --quiet
 ```
 
 ## Run Live Plex Smoke Tests
@@ -200,9 +203,14 @@ Useful variants:
 
 # Custom report + notes output paths
 ./run_release_prep.sh --report docs/release_report.md --notes-output docs/release_notes_next.md
+
+# Reduce progress chatter
+./run_release_prep.sh --skip-build --quiet
 ```
 
 Release checklist reference: `docs/RELEASE_CHECKLIST.md`
+
+Release operator quick guide: `docs/RELEASE_OPERATOR_GUIDE.md`
 
 ## Generate Release Notes
 
@@ -242,6 +250,9 @@ Create and push tag:
 
 ```bash
 ./create_release_tag.sh --version v1.0.1 --apply --push
+
+# Low-noise dry-run
+./create_release_tag.sh --version v1.0.1 --quiet
 ```
 
 ## First Launch Setup

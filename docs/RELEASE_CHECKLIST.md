@@ -3,6 +3,7 @@
 ## Scope
 - Use this checklist before creating a release/tag.
 - Goal: produce repeatable evidence that build/tests/smoke checks passed.
+- Operator quick path: `docs/RELEASE_OPERATOR_GUIDE.md`
 
 ## Pre-Release Steps
 1. Confirm branch and sync latest changes.
@@ -106,6 +107,20 @@ cd /Users/sutherland/repo
 make release-prep-fast
 ```
 
+Run quality gate in low-noise mode:
+
+```bash
+cd /Users/sutherland/repo
+./run_quality_gate.sh --skip-build --quiet
+```
+
+Run release prep in low-noise mode:
+
+```bash
+cd /Users/sutherland/repo
+./run_release_prep.sh --skip-build --quiet
+```
+
 Include live read-only smoke:
 
 ```bash
@@ -133,6 +148,7 @@ Optional helper to prepare and create/push a release tag:
 cd /Users/sutherland/repo
 ./create_release_tag.sh --version v1.0.1
 # then: ./create_release_tag.sh --version v1.0.1 --apply --push
+# or low-noise dry-run: ./create_release_tag.sh --version v1.0.1 --quiet
 ```
 
 ## Outputs
