@@ -2017,6 +2017,26 @@ struct DryRunPreviewSheet: View {
         !visibleEpisodeIdSet.isEmpty && visibleEpisodeIdSet.isSubset(of: selectedDryRunEpisodeIds)
     }
 
+    private var changedEpisodeIdSet: Set<Int> {
+        Set(viewModel.dryRunRows.filter { hasMeaningfulChange($0) }.map { $0.episodeId })
+    }
+
+    private var actionableChangedEpisodeIdSet: Set<Int> {
+        Set(
+            viewModel.dryRunRows
+                .filter { hasMeaningfulChange($0) && $0.mappedCode != "Skipped" }
+                .map { $0.episodeId }
+        )
+    }
+
+    private var stage1Complete: Bool {
+        !viewModel.dryRunRows.isEmpty && showChangesOnly
+    }
+
+    private var stage2Complete: Bool {
+        selectedApplyCount > 0
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             HStack {
@@ -2040,6 +2060,15 @@ struct DryRunPreviewSheet: View {
                 Text(viewModel.dryRunSummary.isEmpty ? "No preview yet" : viewModel.dryRunSummary)
                     .font(.system(size: 12))
                     .foregroundColor(.plexTextSecondary)
+
+                if !viewModel.dryRunRows.isEmpty {
+                    HStack(spacing: 8) {
+                        dryRunStageChip(title: "1 Filter", done: stage1Complete)
+                        dryRunStageChip(title: "2 Select", done: stage2Complete)
+                        dryRunStageChip(title: "3 Apply", done: false)
+                        Spacer()
+                    }
+                }
 
                 if !viewModel.dryRunRows.isEmpty {
                     HStack(spacing: 10) {
@@ -2178,6 +2207,26 @@ struct DryRunPreviewSheet: View {
 
             HStack {
                 Spacer()
+                Button("Run 3 Stages") {
+                    guard !actionableChangedEpisodeIdSet.isEmpty else {
+                        viewModel.statusMessage = "No actionable changed dry run rows to apply"
+                        return
+                    }
+
+                    // One-click flow: focus changed rows, select them, then confirm apply.
+                    showChangesOnly = true
+                    selectedDryRunEpisodeIds = actionableChangedEpisodeIdSet
+                    viewModel.statusMessage = "Stage 1 and 2 done. Confirm Stage 3 to apply"
+                    confirmApplyDryRun = true
+                }
+                .buttonStyle(PlainButtonStyle())
+                .foregroundColor(.black)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(actionableChangedEpisodeIdSet.isEmpty || viewModel.isDryRunLoading ? Color.plexLightGray : Color.plexOrange)
+                .cornerRadius(6)
+                .disabled(actionableChangedEpisodeIdSet.isEmpty || viewModel.isDryRunLoading)
+
                 Button("Apply Selected") {
                     confirmApplyDryRun = true
                 }
@@ -2237,6 +2286,20 @@ struct DryRunPreviewSheet: View {
         } else {
             selectedDryRunEpisodeIds.insert(episodeId)
         }
+    }
+
+    private func dryRunStageChip(title: String, done: Bool) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: done ? "checkmark.circle.fill" : "circle")
+                .font(.system(size: 10, weight: .semibold))
+            Text(title)
+                .font(.system(size: 10, weight: .semibold))
+        }
+        .foregroundColor(done ? .black : .plexTextPrimary)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(done ? Color.plexOrange : Color.plexLightGray.opacity(0.5))
+        .cornerRadius(8)
     }
 }
 
