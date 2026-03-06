@@ -1622,6 +1622,7 @@ struct SettingsView_New: View {
     @State private var pendingRestoreBackup: BackupFileItem?
     @State private var pendingSectionTrashConfirmation: SectionTrashConfirmation?
     @State private var showRollbackWizardConfirm = false
+    @State private var showPresetRunConfirm = false
     @State private var rollbackIncludeSafeRerun = true
     @State private var backupSearchText: String = ""
     @State private var backupSortMode: BackupSortMode = .newest
@@ -1851,7 +1852,11 @@ struct SettingsView_New: View {
                                 }
 
                                 ActionButton(title: "Run Preset", icon: "play.circle", disabled: viewModel.selectedPlexPresetId.isEmpty) {
-                                    viewModel.runSelectedPreset()
+                                    if viewModel.selectedPresetRequiresDestructiveConfirmation() {
+                                        showPresetRunConfirm = true
+                                    } else {
+                                        viewModel.runSelectedPreset()
+                                    }
                                 }
 
                                 ActionButton(title: "Delete", icon: "trash", disabled: viewModel.selectedPlexPresetId.isEmpty) {
@@ -2738,6 +2743,19 @@ struct SettingsView_New: View {
                 },
                 secondaryButton: .cancel {
                     showRollbackWizardConfirm = false
+                }
+            )
+        }
+        .alert(isPresented: $showPresetRunConfirm) {
+            Alert(
+                title: Text("Run Destructive Preset?"),
+                message: Text("\(viewModel.selectedPresetName()) includes Empty Trash, which removes unavailable media entries. Continue?"),
+                primaryButton: .destructive(Text("Run Preset")) {
+                    viewModel.runSelectedPreset(confirmedDestructive: true)
+                    showPresetRunConfirm = false
+                },
+                secondaryButton: .cancel {
+                    showPresetRunConfirm = false
                 }
             )
         }

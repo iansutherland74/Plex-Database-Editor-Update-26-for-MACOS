@@ -1800,10 +1800,15 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
         saveSettings()
     }
 
-    func runSelectedPreset() {
+    func runSelectedPreset(confirmedDestructive: Bool = false) {
         guard let uuid = UUID(uuidString: selectedPlexPresetId),
               let preset = plexActionPresets.first(where: { $0.id == uuid }) else {
             statusMessage = "Select a preset to run"
+            return
+        }
+
+        if preset.includeEmptyTrash && !confirmedDestructive {
+            statusMessage = "Preset includes Empty Trash. Confirm before running."
             return
         }
 
@@ -1831,6 +1836,22 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
         }
 
         runPresetOnSections(preset: preset, sections: targetSections)
+    }
+
+    func selectedPresetRequiresDestructiveConfirmation() -> Bool {
+        guard let uuid = UUID(uuidString: selectedPlexPresetId),
+              let preset = plexActionPresets.first(where: { $0.id == uuid }) else {
+            return false
+        }
+        return preset.includeEmptyTrash
+    }
+
+    func selectedPresetName() -> String {
+        guard let uuid = UUID(uuidString: selectedPlexPresetId),
+              let preset = plexActionPresets.first(where: { $0.id == uuid }) else {
+            return "selected preset"
+        }
+        return preset.name
     }
 
     func previewTrashForLoadedSections() {
@@ -3133,7 +3154,7 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
             } catch {
                 lastError = error
                 if attempt < retries {
-                    endSectionJob(jobId: jobId, status: "Retrying \(attempt + 1)/\(retries)")
+                    updateSectionJobStatus(jobId: jobId, status: "Retrying \(attempt + 1)/\(retries)")
                     if delayNanos > 0 {
                         try? await Task.sleep(nanoseconds: delayNanos)
                     }
@@ -3176,6 +3197,13 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
             if self.completedSectionJobs.count > 300 {
                 self.completedSectionJobs = Array(self.completedSectionJobs.prefix(300))
             }
+        }
+    }
+
+    private func updateSectionJobStatus(jobId: UUID, status: String) {
+        DispatchQueue.main.async {
+            guard let index = self.activeSectionJobs.firstIndex(where: { $0.id == jobId }) else { return }
+            self.activeSectionJobs[index].status = status
         }
     }
 
