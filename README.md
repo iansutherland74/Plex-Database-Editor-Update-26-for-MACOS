@@ -45,6 +45,13 @@ cd /Users/sutherland/repo
 ./run_dry_run_tests.sh
 ```
 
+## Run Stage 2 Reliability Tests
+
+```bash
+cd /Users/sutherland/repo
+./run_stage2_tests.sh
+```
+
 ## First Launch Setup
 
 In the app Settings tab, verify:

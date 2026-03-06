@@ -1952,8 +1952,14 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
             // generic 404/405 for OPTIONS/HEAD even when runtime action methods are accepted.
             let emptyTrashProbe = await probePlexEndpoint(baseURL: serverURL, token: token, path: "/library/sections/\(probeSection.key)/emptyTrash")
             let cancelProbe = await probePlexEndpoint(baseURL: serverURL, token: token, path: "/library/sections/\(probeSection.key)/refresh/cancel")
-            let emptyTrash = emptyTrashProbe || self.plexCapabilities.canEmptyTrashSection
-            let cancel = cancelProbe || self.plexCapabilities.canCancelSectionJob
+            let emptyTrash = Self.resolveAdvisoryCapability(
+                probeSupported: emptyTrashProbe,
+                previousCapability: self.plexCapabilities.canEmptyTrashSection
+            )
+            let cancel = Self.resolveAdvisoryCapability(
+                probeSupported: cancelProbe,
+                previousCapability: self.plexCapabilities.canCancelSectionJob
+            )
 
             DispatchQueue.main.async {
                 self.plexCapabilities = PlexCapabilities(
@@ -2700,6 +2706,14 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
         let end = job.finishedAt ?? Date()
         let seconds = max(0, end.timeIntervalSince(job.startedAt))
         return String(format: "%.1fs", seconds)
+    }
+
+    func previewNextSchedulerRunDate(from date: Date) -> Date {
+        nextSchedulerRunDate(from: date)
+    }
+
+    static func resolveAdvisoryCapability(probeSupported: Bool, previousCapability: Bool) -> Bool {
+        probeSupported || previousCapability
     }
 
     func clearSectionJobMonitor() {
