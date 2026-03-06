@@ -57,6 +57,13 @@ cd /Users/sutherland/repo
 ./run_stage8_tests.sh
 ```
 
+Run Stage 9 release report and notes schema tests directly:
+
+```bash
+cd /Users/sutherland/repo
+./run_stage9_tests.sh
+```
+
 Run full release prep (includes build):
 
 ```bash
