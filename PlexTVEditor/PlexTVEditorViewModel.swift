@@ -24,6 +24,18 @@ enum ChangeLogExportFormat {
     }
 }
 
+enum DryRunExportFormat {
+    case csv
+    case json
+
+    var fileExtension: String {
+        switch self {
+        case .csv: return "csv"
+        case .json: return "json"
+        }
+    }
+}
+
 struct ChangeLogEntry: Codable, Identifiable {
     let id: UUID
     let timestampISO8601: String
@@ -35,7 +47,7 @@ struct ChangeLogEntry: Codable, Identifiable {
     let tmdbContext: String?
 }
 
-struct DryRunDiffRow: Identifiable {
+struct DryRunDiffRow: Encodable, Identifiable {
     let id = UUID()
     let episodeId: Int
     let currentCode: String
@@ -1055,6 +1067,54 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
         )
     }
 
+    func isDryRunMeaningfulChange(_ row: DryRunDiffRow) -> Bool {
+        if row.currentCode != row.mappedCode { return true }
+        if row.currentTitle != row.mappedTitle { return true }
+        if row.currentAirDate != row.mappedAirDate { return true }
+        if row.mappedCode == "Skipped" { return true }
+        return row.note.lowercased().contains("missing")
+    }
+
+    func exportDryRun(format: DryRunExportFormat, onlyChangedRows: Bool) {
+        guard !dryRunRows.isEmpty else {
+            statusMessage = "No dry run rows to export"
+            return
+        }
+
+        let rowsToExport = onlyChangedRows
+            ? dryRunRows.filter { isDryRunMeaningfulChange($0) }
+            : dryRunRows
+
+        guard !rowsToExport.isEmpty else {
+            statusMessage = "No dry run rows match current export filter"
+            return
+        }
+
+        let panel = NSSavePanel()
+        panel.canCreateDirectories = true
+        panel.allowedFileTypes = [format.fileExtension]
+        panel.nameFieldStringValue = "plex_dry_run_\(Self.fileTimestamp()).\(format.fileExtension)"
+        panel.title = "Export Dry Run"
+        panel.message = "Save dry run as \(format.fileExtension.uppercased())"
+
+        guard panel.runModal() == .OK, let url = panel.url else {
+            statusMessage = "Dry run export cancelled"
+            return
+        }
+
+        do {
+            switch format {
+            case .csv:
+                try csvDataForDryRun(rows: rowsToExport).write(to: url, options: .atomic)
+            case .json:
+                try jsonDataForDryRun(rows: rowsToExport).write(to: url, options: .atomic)
+            }
+            statusMessage = "Exported \(rowsToExport.count) dry run row(s)"
+        } catch {
+            statusMessage = "Failed to export dry run: \(error.localizedDescription)"
+        }
+    }
+
     func refreshBackupFiles() {
         let backupDirectory = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
             .appendingPathComponent(".plex_tv_editor_backups", isDirectory: true)
@@ -1089,6 +1149,17 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
         }
     }
 
+    func revealBackupInFinder(path: String) {
+        let expandedPath = expandPath(path)
+        let url = URL(fileURLWithPath: expandedPath)
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            statusMessage = "Backup file not found"
+            return
+        }
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+        statusMessage = "Revealed backup in Finder"
+    }
+
     func restoreBackup(from backupPath: String) {
         let sourcePath = expandPath(backupPath)
         let destinationPath = expandPath(plexDbPath)
@@ -1108,6 +1179,12 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
 
         guard fileManager.fileExists(atPath: sourceURL.path) else {
             statusMessage = "Backup file not found"
+            return
+        }
+
+        if fileManager.fileExists(atPath: destinationURL.path),
+           !canAcquireExclusiveSQLiteLock(atPath: destinationURL.path) {
+            statusMessage = "Plex database appears busy. Stop Plex scans/playback and retry restore"
             return
         }
 
@@ -1444,6 +1521,66 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         return try encoder.encode(changeLogEntries)
+    }
+
+    private func csvDataForDryRun(rows: [DryRunDiffRow]) throws -> Data {
+        var lines: [String] = []
+        lines.append("episode_id,current_code,mapped_code,current_title,mapped_title,current_air_date,mapped_air_date,note")
+
+        for row in rows {
+            let fields: [String] = [
+                String(row.episodeId),
+                row.currentCode,
+                row.mappedCode,
+                row.currentTitle,
+                row.mappedTitle,
+                row.currentAirDate,
+                row.mappedAirDate,
+                row.note
+            ]
+            lines.append(fields.map(Self.csvEscape).joined(separator: ","))
+        }
+
+        let csv = lines.joined(separator: "\n")
+        guard let data = csv.data(using: .utf8) else {
+            throw NSError(domain: "PlexTVEditor", code: 2, userInfo: [NSLocalizedDescriptionKey: "Could not encode dry run CSV as UTF-8"])
+        }
+        return data
+    }
+
+    private func jsonDataForDryRun(rows: [DryRunDiffRow]) throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return try encoder.encode(rows)
+    }
+
+    private func canAcquireExclusiveSQLiteLock(atPath path: String) -> Bool {
+        var db: OpaquePointer?
+        let flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX
+
+        guard sqlite3_open_v2(path, &db, flags, nil) == SQLITE_OK, let db else {
+            if db != nil {
+                sqlite3_close(db)
+            }
+            return false
+        }
+
+        defer {
+            sqlite3_close(db)
+        }
+
+        var errorPointer: UnsafeMutablePointer<CChar>?
+        let beginResult = sqlite3_exec(db, "BEGIN EXCLUSIVE;", nil, nil, &errorPointer)
+
+        if beginResult != SQLITE_OK {
+            if errorPointer != nil {
+                sqlite3_free(errorPointer)
+            }
+            return false
+        }
+
+        _ = sqlite3_exec(db, "ROLLBACK;", nil, nil, nil)
+        return true
     }
 
     private static func csvEscape(_ value: String) -> String {

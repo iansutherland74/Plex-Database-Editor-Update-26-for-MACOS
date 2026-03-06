@@ -1501,9 +1501,41 @@ struct MovieRowView: View {
 
 // MARK: - Settings View
 struct SettingsView_New: View {
+    enum BackupSortMode: String, CaseIterable, Identifiable {
+        case newest = "Newest"
+        case oldest = "Oldest"
+        case largest = "Largest"
+        case smallest = "Smallest"
+
+        var id: String { rawValue }
+    }
+
     @ObservedObject var viewModel: PlexTVEditorViewModel
     @State private var restoringBackupPath: String?
     @State private var pendingRestoreBackup: BackupFileItem?
+    @State private var backupSearchText: String = ""
+    @State private var backupSortMode: BackupSortMode = .newest
+
+    private var filteredBackupFiles: [BackupFileItem] {
+        let query = backupSearchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        let base = query.isEmpty
+            ? viewModel.backupFiles
+            : viewModel.backupFiles.filter {
+                $0.fileName.lowercased().contains(query) || $0.path.lowercased().contains(query)
+            }
+
+        switch backupSortMode {
+        case .newest:
+            return base.sorted { $0.modifiedAt > $1.modifiedAt }
+        case .oldest:
+            return base.sorted { $0.modifiedAt < $1.modifiedAt }
+        case .largest:
+            return base.sorted { $0.sizeBytes > $1.sizeBytes }
+        case .smallest:
+            return base.sorted { $0.sizeBytes < $1.sizeBytes }
+        }
+    }
     
     var body: some View {
         ScrollView {
@@ -1615,19 +1647,37 @@ struct SettingsView_New: View {
                             }
                             .keyboardShortcut("b", modifiers: [.command, .option])
 
-                            Text("\(viewModel.backupFiles.count) file(s) found")
+                            Text("\(filteredBackupFiles.count)/\(viewModel.backupFiles.count) file(s)")
                                 .font(.system(size: 12))
                                 .foregroundColor(.plexTextSecondary)
+                        }
+
+                        HStack(spacing: 10) {
+                            TextField("Search backups", text: $backupSearchText)
+                                .textFieldStyle(RoundedBorderTextFieldStyle())
+                                .font(.system(size: 12))
+
+                            Picker("Sort", selection: $backupSortMode) {
+                                ForEach(BackupSortMode.allCases) { mode in
+                                    Text(mode.rawValue).tag(mode)
+                                }
+                            }
+                            .pickerStyle(MenuPickerStyle())
+                            .frame(width: 120)
                         }
 
                         if viewModel.backupFiles.isEmpty {
                             Text("No backups found yet. Run any write action to generate one.")
                                 .font(.system(size: 12))
                                 .foregroundColor(.plexTextSecondary)
+                        } else if filteredBackupFiles.isEmpty {
+                            Text("No backups match your search filter.")
+                                .font(.system(size: 12))
+                                .foregroundColor(.plexTextSecondary)
                         } else {
                             ScrollView {
                                 VStack(spacing: 8) {
-                                    ForEach(Array(viewModel.backupFiles.prefix(25)), id: \.id) { backup in
+                                    ForEach(Array(filteredBackupFiles.prefix(50)), id: \.id) { backup in
                                         HStack(spacing: 10) {
                                             VStack(alignment: .leading, spacing: 2) {
                                                 Text(backup.fileName)
@@ -1642,6 +1692,19 @@ struct SettingsView_New: View {
                                             }
 
                                             Spacer()
+
+                                            Button {
+                                                viewModel.revealBackupInFinder(path: backup.path)
+                                            } label: {
+                                                Text("Show")
+                                                    .font(.system(size: 11, weight: .semibold))
+                                                    .foregroundColor(.plexTextPrimary)
+                                                    .padding(.horizontal, 10)
+                                                    .padding(.vertical, 6)
+                                                    .background(Color.plexLightGray)
+                                                    .cornerRadius(6)
+                                            }
+                                            .buttonStyle(PlainButtonStyle())
 
                                             Button {
                                                 pendingRestoreBackup = backup
@@ -1968,6 +2031,28 @@ struct DryRunPreviewSheet: View {
                             .foregroundColor(.plexTextSecondary)
 
                         Spacer()
+
+                        Button("Export CSV") {
+                            viewModel.exportDryRun(format: .csv, onlyChangedRows: showChangesOnly)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.plexTextPrimary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color.plexLightGray.opacity(0.6))
+                        .cornerRadius(6)
+
+                        Button("Export JSON") {
+                            viewModel.exportDryRun(format: .json, onlyChangedRows: showChangesOnly)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.plexTextPrimary)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(Color.plexLightGray.opacity(0.6))
+                        .cornerRadius(6)
                     }
                 }
 
@@ -2079,11 +2164,7 @@ struct DryRunPreviewSheet: View {
     }
 
     private func hasMeaningfulChange(_ row: DryRunDiffRow) -> Bool {
-        if row.currentCode != row.mappedCode { return true }
-        if row.currentTitle != row.mappedTitle { return true }
-        if row.currentAirDate != row.mappedAirDate { return true }
-        if row.mappedCode == "Skipped" { return true }
-        return row.note.lowercased().contains("missing")
+        viewModel.isDryRunMeaningfulChange(row)
     }
 }
 
@@ -2119,6 +2200,7 @@ struct ShortcutHelpSheet: View {
                         ShortcutRow(keys: "Cmd+S", action: "Save manual episode edit")
                         ShortcutRow(keys: "Cmd+M", action: "Apply TV Metadata remap")
                         ShortcutRow(keys: "Cmd+Option+D", action: "Run TMDB dry run diff")
+                        ShortcutRow(keys: "Dry Run Sheet", action: "Export CSV/JSON (changes-only aware)")
                         ShortcutRow(keys: "Cmd+Option+T", action: "Smart Thumb Season")
                         ShortcutRow(keys: "Cmd+P", action: "View Plex Panel")
                         ShortcutRow(keys: "Cmd+Option+R", action: "Auto Select range (Episodes tab)")
