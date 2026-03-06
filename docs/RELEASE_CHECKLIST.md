@@ -50,6 +50,13 @@ cd /Users/sutherland/repo
 ./run_stage7_tests.sh
 ```
 
+Run Stage 8 workflow input and versioning edge tests directly:
+
+```bash
+cd /Users/sutherland/repo
+./run_stage8_tests.sh
+```
+
 Run full release prep (includes build):
 
 ```bash

@@ -1,4 +1,4 @@
-.PHONY: help build dry-run-tests stage2-tests stage3-tests stage4-tests stage5-tests stage6-tests stage7-tests quality quality-fast \
+.PHONY: help build dry-run-tests stage2-tests stage3-tests stage4-tests stage5-tests stage6-tests stage7-tests stage8-tests quality quality-fast \
 	live-smoke live-smoke-write release-prep release-prep-fast \
 	release-notes release-tag-dry-run
 
@@ -12,6 +12,7 @@ help:
 	@echo "  make stage5-tests        - Run Stage 5 tooling contract tests"
 	@echo "  make stage6-tests        - Run Stage 6 release automation regression tests"
 	@echo "  make stage7-tests        - Run Stage 7 CI/release workflow contract tests"
+	@echo "  make stage8-tests        - Run Stage 8 workflow input and versioning edge tests"
 	@echo "  make quality             - Full quality gate"
 	@echo "  make quality-fast        - Quality gate without build"
 	@echo "  make live-smoke          - Live Plex smoke (read-only)"
@@ -44,6 +45,9 @@ stage6-tests:
 
 stage7-tests:
 	./run_stage7_tests.sh
+
+stage8-tests:
+	./run_stage8_tests.sh
 
 quality:
 	./run_quality_gate.sh $(QUALITY_ARGS)
