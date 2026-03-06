@@ -4,6 +4,14 @@ set -euo pipefail
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$PROJECT_DIR"
 
+START_TIME="$(date +%s)"
+
+elapsed_seconds() {
+    local now
+    now="$(date +%s)"
+    echo $((now - START_TIME))
+}
+
 RUN_QUALITY_GATE=1
 QUALITY_GATE_ARGS=()
 REPORT_PATH="docs/release_prep_report_$(date +%Y%m%d_%H%M%S).md"
@@ -109,6 +117,9 @@ done
 
 mkdir -p "$(dirname "$REPORT_PATH")"
 
+echo "[release-prep] Starting release prep workflow"
+echo "[release-prep] Report path: $REPORT_PATH"
+
 DATE_UTC="$(date -u +"%Y-%m-%d %H:%M:%SZ")"
 BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 HEAD_SHA="$(git rev-parse --short HEAD)"
@@ -124,6 +135,7 @@ NOTES_EXIT=0
 NOTES_OUTPUT="(release notes generation skipped)"
 
 if [ "$RUN_QUALITY_GATE" -eq 1 ]; then
+    echo "[release-prep] Running quality gate..."
     set +e
     if [ "${#QUALITY_GATE_ARGS[@]}" -gt 0 ]; then
         QUALITY_OUTPUT="$(./run_quality_gate.sh "${QUALITY_GATE_ARGS[@]}" 2>&1)"
@@ -132,9 +144,11 @@ if [ "$RUN_QUALITY_GATE" -eq 1 ]; then
     fi
     QUALITY_EXIT=$?
     set -e
+    echo "[release-prep] Quality gate finished (exit=${QUALITY_EXIT}, elapsed=$(elapsed_seconds)s)"
 fi
 
 if [ "$RUN_RELEASE_NOTES" -eq 1 ]; then
+    echo "[release-prep] Generating release notes..."
     set +e
     if [ "${#RELEASE_NOTES_ARGS[@]}" -gt 0 ]; then
         NOTES_OUTPUT="$(./generate_release_notes.sh "${RELEASE_NOTES_ARGS[@]}" 2>&1)"
@@ -143,6 +157,7 @@ if [ "$RUN_RELEASE_NOTES" -eq 1 ]; then
     fi
     NOTES_EXIT=$?
     set -e
+    echo "[release-prep] Release notes finished (exit=${NOTES_EXIT}, elapsed=$(elapsed_seconds)s)"
 
     if [ "$NOTES_EXIT" -eq 0 ] && [ -z "$RELEASE_NOTES_PATH" ]; then
         RELEASE_NOTES_PATH="$(printf '%s\n' "$NOTES_OUTPUT" | sed -n 's/^Wrote release notes: //p' | tail -n 1)"
@@ -191,6 +206,7 @@ RECENT_COMMITS="$(git --no-pager log --oneline -n 12)"
 } > "$REPORT_PATH"
 
 echo "Wrote release prep report: $REPORT_PATH"
+echo "[release-prep] Completed in $(elapsed_seconds)s"
 
 if [ "$QUALITY_EXIT" -ne 0 ]; then
     echo "Release prep failed because quality gate failed"

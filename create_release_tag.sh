@@ -4,6 +4,14 @@ set -euo pipefail
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$PROJECT_DIR"
 
+START_TIME="$(date +%s)"
+
+elapsed_seconds() {
+    local now
+    now="$(date +%s)"
+    echo $((now - START_TIME))
+}
+
 VERSION=""
 TO_REF="HEAD"
 FROM_TAG=""
@@ -120,6 +128,8 @@ if [ -z "$VERSION" ]; then
     exit 2
 fi
 
+echo "[release-tag] Starting release tag workflow for ${VERSION}"
+
 if ! printf '%s' "$VERSION" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$'; then
     echo "Version must look like vMAJOR.MINOR.PATCH (optional suffix allowed)"
     exit 2
@@ -150,6 +160,8 @@ if [ -n "$(git status --short)" ]; then
     exit 2
 fi
 
+echo "[release-tag] Preconditions satisfied (elapsed=$(elapsed_seconds)s)"
+
 if [ -z "$FROM_TAG" ]; then
     FROM_TAG="$(git describe --tags --abbrev=0 "$TO_REF" 2>/dev/null || true)"
 fi
@@ -174,8 +186,10 @@ if [ -n "$FROM_TAG" ]; then
 fi
 
 "${notes_cmd[@]}"
+echo "[release-tag] Release notes generated (elapsed=$(elapsed_seconds)s)"
 
 if [ "$RUN_PREP" -eq 1 ]; then
+    echo "[release-tag] Running release prep checks..."
     prep_cmd=(
         ./run_release_prep.sh
         --skip-build
@@ -190,6 +204,7 @@ if [ "$RUN_PREP" -eq 1 ]; then
     fi
 
     "${prep_cmd[@]}"
+    echo "[release-tag] Release prep finished (elapsed=$(elapsed_seconds)s)"
 fi
 
 echo "Prepared release assets:"
@@ -200,6 +215,7 @@ fi
 
 if [ "$APPLY" -ne 1 ]; then
     echo "Dry-run complete. Tag not created. Use --apply to create tag $VERSION"
+    echo "[release-tag] Completed dry-run in $(elapsed_seconds)s"
     exit 0
 fi
 
@@ -223,10 +239,12 @@ git tag -a "$VERSION" "$TO_REF" -F "$TAG_MESSAGE_FILE"
 rm -f "$TAG_MESSAGE_FILE"
 
 echo "Created tag: $VERSION"
+echo "[release-tag] Tag created locally (elapsed=$(elapsed_seconds)s)"
 
 if [ "$PUSH" -eq 1 ]; then
     git push origin "$VERSION"
     echo "Pushed tag to origin: $VERSION"
+    echo "[release-tag] Remote push completed (elapsed=$(elapsed_seconds)s)"
 fi
 
 exit 0

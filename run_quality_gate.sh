@@ -102,9 +102,9 @@ Default behavior:
   - Run Stage 6 release automation regression tests (`./run_stage6_tests.sh`)
   - Run Stage 7 CI/release workflow contract tests (`./run_stage7_tests.sh`)
   - Run Stage 8 workflow input and versioning edge tests (`./run_stage8_tests.sh`)
-  - Run Stage 9 release report and notes schema tests (`./run_stage9_tests.sh`)
-  - Run Stage 10 live smoke safety contract tests (`./run_stage10_tests.sh`)
-  - Run Stage 11 release tag provenance contract tests (`./run_stage11_tests.sh`)
+    - Run Stage 9 release report and notes schema tests (`./run_stage9_tests.sh`)
+    - Run Stage 10 live smoke safety contract tests (`./run_stage10_tests.sh`)
+    - Run Stage 11 release tag provenance contract tests (`./run_stage11_tests.sh`)
   - Lint shell scripts with `bash -n`
   - Validate live smoke script help output
 
@@ -118,9 +118,9 @@ Options:
   --skip-stage6        Skip Stage 6 release-automation regression tests
   --skip-stage7        Skip Stage 7 CI/release workflow contract tests
   --skip-stage8        Skip Stage 8 workflow input and versioning edge tests
-  --skip-stage9        Skip Stage 9 release report and notes schema tests
-  --skip-stage10       Skip Stage 10 live smoke safety contract tests
-  --skip-stage11       Skip Stage 11 release tag provenance contract tests
+    --skip-stage9        Skip Stage 9 release report and notes schema tests
+    --skip-stage10       Skip Stage 10 live smoke safety contract tests
+    --skip-stage11       Skip Stage 11 release tag provenance contract tests
   --skip-shell-lint    Skip shell syntax checks
   --skip-smoke-help    Skip live smoke help sanity check
   --include-live-smoke Run live Plex smoke checks (read-only)
