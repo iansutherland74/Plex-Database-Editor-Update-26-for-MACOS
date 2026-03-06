@@ -4,60 +4,7 @@ set -euo pipefail
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$PROJECT_DIR"
 
-QUIET=0
+source "$PROJECT_DIR/scripts/stage_runner_common.sh"
+stage_parse_or_exit "run_stage6_tests.sh" "$@"
 
-while [ $# -gt 0 ]; do
-	case "$1" in
-		--quiet|-q)
-			QUIET=1
-			shift
-			;;
-		--help|-h)
-			cat <<'HELP'
-Usage: ./run_stage6_tests.sh [--quiet]
-
-Options:
-  --quiet, -q  Reduce output; print full logs only on failure
-  --help       Show this help
-HELP
-			exit 0
-			;;
-		*)
-			echo "Unknown argument: $1"
-			exit 2
-			;;
-	esac
-done
-
-log() {
-	if [ "$QUIET" -eq 0 ]; then
-		echo "$*"
-	fi
-}
-
-run_stage_test() {
-	if [ "$QUIET" -eq 1 ]; then
-		local stage_log
-		stage_log="$(mktemp /tmp/stage6_tests.XXXXXX)"
-		if bash ./tests/Stage6ReleaseAutomationRegressionTests.sh >"$stage_log" 2>&1; then
-			rm -f "$stage_log"
-			return 0
-		fi
-		cat "$stage_log"
-		rm -f "$stage_log"
-		return 1
-	fi
-
-	bash ./tests/Stage6ReleaseAutomationRegressionTests.sh
-}
-
-START_TIME="$(date +%s)"
-log "[stage6] Running Stage 6 release automation regression tests..."
-
-if run_stage_test; then
-	END_TIME="$(date +%s)"
-	log "[stage6] Completed in $((END_TIME - START_TIME))s"
-else
-	echo "[stage6] FAIL: Stage 6 release automation regression tests failed"
-	exit 1
-fi
+stage_run_standard "6" "Stage 6 release automation regression tests..." "./tests/Stage6ReleaseAutomationRegressionTests.sh" "Stage 6 release automation regression tests failed"

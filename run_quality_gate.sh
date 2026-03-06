@@ -252,6 +252,7 @@ if [ "$RUN_SHELL_LINT" -eq 1 ]; then
     run_step "Shell lint run_stage9_tests.sh" bash -n ./run_stage9_tests.sh
     run_step "Shell lint run_stage10_tests.sh" bash -n ./run_stage10_tests.sh
     run_step "Shell lint run_stage11_tests.sh" bash -n ./run_stage11_tests.sh
+    run_step "Shell lint scripts/stage_runner_common.sh" bash -n ./scripts/stage_runner_common.sh
     run_step "Shell lint run_live_plex_smoke.sh" bash -n ./run_live_plex_smoke.sh
     run_step "Shell lint run_release_prep.sh" bash -n ./run_release_prep.sh
     run_step "Shell lint generate_release_notes.sh" bash -n ./generate_release_notes.sh
