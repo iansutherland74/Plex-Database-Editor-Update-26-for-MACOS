@@ -186,6 +186,7 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
     @Published var isAnalyzingPlexSection = false
     @Published var isEmptyingPlexSection = false
     @Published var isCancellingPlexSectionJob = false
+    @Published var isRunningPlexSectionMaintenance = false
     @Published var lastQueuedPlexSectionKey: String = ""
     @Published var lastQueuedPlexSectionLabel: String = ""
     @Published var lastQueuedPlexSectionAction: String = ""
@@ -1822,6 +1823,81 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
                     self.isEmptyingPlexSection = false
                     self.statusMessage = "Empty trash failed for \(sectionLabel): \(error.localizedDescription)"
                     self.recordPlexSectionAction(sectionKey: trimmedSectionKey, sectionLabel: sectionLabel, action: .emptyTrash, outcome: "Failed: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    func runPlexSectionMaintenance(sectionKey: String, sectionLabel: String) {
+        let normalizedServerURL = normalizePlexServerURL(plexServerURL)
+        guard !normalizedServerURL.isEmpty,
+              let serverURL = URL(string: normalizedServerURL) else {
+            statusMessage = "Enter a valid Plex server URL"
+            return
+        }
+
+        let token = plexToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !token.isEmpty else {
+            statusMessage = "Enter Plex token before running maintenance"
+            return
+        }
+
+        let trimmedSectionKey = sectionKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedSectionKey.isEmpty else {
+            statusMessage = "Select a Plex section before running maintenance"
+            return
+        }
+
+        isRunningPlexSectionMaintenance = true
+        statusMessage = "Queueing Plex maintenance for \(sectionLabel)..."
+
+        Task {
+            let actions: [PlexSectionActionKind] = [.refresh, .analyze]
+            var queuedActions: [PlexSectionActionKind] = []
+            var failedActions: [(PlexSectionActionKind, String)] = []
+
+            for action in actions {
+                do {
+                    switch action {
+                    case .refresh:
+                        try await queuePlexSectionRefresh(baseURL: serverURL, token: token, sectionKey: trimmedSectionKey)
+                    case .analyze:
+                        try await queuePlexSectionAnalyze(baseURL: serverURL, token: token, sectionKey: trimmedSectionKey)
+                    case .emptyTrash:
+                        continue
+                    }
+                    queuedActions.append(action)
+                } catch {
+                    failedActions.append((action, error.localizedDescription))
+                }
+            }
+
+            DispatchQueue.main.async {
+                self.isRunningPlexSectionMaintenance = false
+
+                for action in queuedActions {
+                    self.rememberQueuedPlexSectionJob(sectionKey: trimmedSectionKey, sectionLabel: sectionLabel, action: action)
+                    self.recordPlexSectionAction(
+                        sectionKey: trimmedSectionKey,
+                        sectionLabel: sectionLabel,
+                        action: action,
+                        outcome: "Queued via maintenance"
+                    )
+                }
+
+                for (action, message) in failedActions {
+                    self.recordPlexSectionAction(
+                        sectionKey: trimmedSectionKey,
+                        sectionLabel: sectionLabel,
+                        action: action,
+                        outcome: "Failed via maintenance: \(message)"
+                    )
+                }
+
+                if failedActions.isEmpty {
+                    self.statusMessage = "Section maintenance queued for \(sectionLabel): \(queuedActions.count) succeeded"
+                } else {
+                    self.statusMessage = "Section maintenance for \(sectionLabel): \(queuedActions.count) succeeded, \(failedActions.count) failed"
                 }
             }
         }
