@@ -38,6 +38,21 @@ chmod +x build_swift_app.sh
 open /Applications/Plex\ TV\ Editor.app
 ```
 
+## Makefile Shortcuts
+
+You can run common workflows with `make`:
+
+```bash
+cd /Users/sutherland/repo
+make help
+make quality-fast
+make release-prep-fast
+
+# pass extra flags through variables
+make release-prep-fast RELEASE_PREP_ARGS="--notes-from-tag v1.0.0 --notes-to-ref HEAD"
+make quality-fast QUALITY_ARGS="--skip-smoke-help"
+```
+
 ## Run Dry-Run Tests
 
 ```bash

@@ -22,11 +22,25 @@ cd /Users/sutherland/repo
 ./run_release_prep.sh
 ```
 
+Equivalent shortcut:
+
+```bash
+cd /Users/sutherland/repo
+make release-prep
+```
+
 Skip build (when already built in current session):
 
 ```bash
 cd /Users/sutherland/repo
 ./run_release_prep.sh --skip-build
+```
+
+Equivalent shortcut:
+
+```bash
+cd /Users/sutherland/repo
+make release-prep-fast
 ```
 
 Include live read-only smoke:
