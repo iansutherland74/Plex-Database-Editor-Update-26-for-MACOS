@@ -123,6 +123,13 @@ cd /Users/sutherland/repo
 ./run_stage10_tests.sh
 ```
 
+## Run Stage 11 Release Tag Provenance Contract Tests
+
+```bash
+cd /Users/sutherland/repo
+./run_stage11_tests.sh
+```
+
 ## Run Full Quality Gate
 
 Run the full local validation gate (build + tests + script checks):
@@ -277,6 +284,7 @@ GitHub Actions workflow `macOS Swift Build` runs on pushes/PRs to `main` and val
 - `./run_stage8_tests.sh`
 - `./run_stage9_tests.sh`
 - `./run_stage10_tests.sh`
+- `./run_stage11_tests.sh`
 - Shell script syntax checks
 - `./run_live_plex_smoke.sh --help` sanity check
 

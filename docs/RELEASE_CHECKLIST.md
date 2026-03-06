@@ -71,6 +71,13 @@ cd /Users/sutherland/repo
 ./run_stage10_tests.sh
 ```
 
+Run Stage 11 release tag provenance contract tests directly:
+
+```bash
+cd /Users/sutherland/repo
+./run_stage11_tests.sh
+```
+
 Run full release prep (includes build):
 
 ```bash
