@@ -2005,6 +2005,18 @@ struct DryRunPreviewSheet: View {
 
             HStack {
                 Spacer()
+                Button("Apply Last Dry Run") {
+                    viewModel.applyLastDryRunPreview()
+                    onClose()
+                }
+                .buttonStyle(PlainButtonStyle())
+                .foregroundColor(.black)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(viewModel.dryRunRows.isEmpty || viewModel.isDryRunLoading ? Color.plexLightGray : Color.plexOrange)
+                .cornerRadius(6)
+                .disabled(viewModel.dryRunRows.isEmpty || viewModel.isDryRunLoading)
+
                 Button("Close") {
                     onClose()
                 }

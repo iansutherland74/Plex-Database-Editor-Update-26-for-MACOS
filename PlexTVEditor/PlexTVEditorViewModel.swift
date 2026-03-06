@@ -85,6 +85,11 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
     @Published var isDryRunLoading = false
     @Published var backupFiles: [BackupFileItem] = []
 
+    private var lastDryRunEpisodeIds: [Int] = []
+    private var lastDryRunSeasonNumber: Int?
+    private var lastDryRunEpisodeNumber: Int?
+    private var lastDryRunShowRef: String?
+
     private let defaultPlexSqlitePath = "/Applications/Plex Media Server.app/Contents/MacOS/Plex SQLite"
     private let legacyPlexSqlitePath = "/Applications/Plex Media Server.app/Contents/Resources/Support/Plex SQLite"
     private let legacyPlexDbPath = "~/Library/Application Support/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db"
@@ -881,6 +886,10 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
         )
 
         let localEpisodesById = Dictionary(uniqueKeysWithValues: episodes.map { ($0.id, $0) })
+        lastDryRunEpisodeIds = episodeIds
+        lastDryRunSeasonNumber = tmdbStartSeasonNumber
+        lastDryRunEpisodeNumber = tmdbStartEpisodeNumber
+        lastDryRunShowRef = Self.normalizedTMDBShowRef(tmdbShowIdOrURL)
         isDryRunLoading = true
         dryRunRows = []
         dryRunSummary = "Calculating preview..."
@@ -1023,6 +1032,27 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
                 }
             }
         }
+    }
+
+    func applyLastDryRunPreview() {
+        guard !isDryRunLoading else {
+            statusMessage = "Dry run is still loading"
+            return
+        }
+
+        guard !lastDryRunEpisodeIds.isEmpty,
+              let season = lastDryRunSeasonNumber,
+              let episode = lastDryRunEpisodeNumber else {
+            statusMessage = "Run a dry run preview first"
+            return
+        }
+
+        applyTMDBMetadataToEpisodes(
+            episodeIds: lastDryRunEpisodeIds,
+            tmdbStartSeasonNumber: season,
+            tmdbStartEpisodeNumber: episode,
+            tmdbShowIdOrURL: lastDryRunShowRef
+        )
     }
 
     func refreshBackupFiles() {
