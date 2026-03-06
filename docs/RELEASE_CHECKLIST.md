@@ -36,6 +36,13 @@ cd /Users/sutherland/repo
 ./run_stage5_tests.sh
 ```
 
+Run Stage 6 release automation regression tests directly:
+
+```bash
+cd /Users/sutherland/repo
+./run_stage6_tests.sh
+```
+
 Run full release prep (includes build):
 
 ```bash
