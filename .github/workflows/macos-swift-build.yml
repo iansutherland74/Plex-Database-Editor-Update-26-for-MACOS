@@ -34,27 +34,9 @@ jobs:
             TMDBClient.swift \
             -o /tmp/PlexTVEditor-ci-check
 
-      - name: Run Dry-Run Logic Tests
+      - name: Run Quality Gate (Non-Live)
         run: |
           set -e
-          chmod +x ./run_dry_run_tests.sh
-          ./run_dry_run_tests.sh
-
-      - name: Run Stage 2 Reliability Tests
-        run: |
-          set -e
-          chmod +x ./run_stage2_tests.sh
-          ./run_stage2_tests.sh
-
-      - name: Validate Shell Scripts
-        run: |
-          set -e
-          bash -n ./run_dry_run_tests.sh
-          bash -n ./run_stage2_tests.sh
-          bash -n ./run_live_plex_smoke.sh
-
-      - name: Validate Live Smoke Script Help
-        run: |
-          set -e
+          chmod +x ./run_quality_gate.sh
           chmod +x ./run_live_plex_smoke.sh
-          ./run_live_plex_smoke.sh --help
+          ./run_quality_gate.sh --skip-build

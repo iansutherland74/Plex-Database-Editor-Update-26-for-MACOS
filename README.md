@@ -52,6 +52,28 @@ cd /Users/sutherland/repo
 ./run_stage2_tests.sh
 ```
 
+## Run Full Quality Gate
+
+Run the full local validation gate (build + tests + script checks):
+
+```bash
+cd /Users/sutherland/repo
+./run_quality_gate.sh
+```
+
+Common variants:
+
+```bash
+# Skip build when build was already run
+./run_quality_gate.sh --skip-build
+
+# Include live Plex endpoint checks
+./run_quality_gate.sh --include-live-smoke
+
+# Include live non-destructive write queue checks
+./run_quality_gate.sh --include-live-write
+```
+
 ## Run Live Plex Smoke Tests
 
 Read-only endpoint checks:
