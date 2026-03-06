@@ -1921,6 +1921,7 @@ struct SmallUtilityButton: View {
 struct DryRunPreviewSheet: View {
     @ObservedObject var viewModel: PlexTVEditorViewModel
     let onClose: () -> Void
+    @State private var confirmApplyDryRun = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -2006,8 +2007,7 @@ struct DryRunPreviewSheet: View {
             HStack {
                 Spacer()
                 Button("Apply Last Dry Run") {
-                    viewModel.applyLastDryRunPreview()
-                    onClose()
+                    confirmApplyDryRun = true
                 }
                 .buttonStyle(PlainButtonStyle())
                 .foregroundColor(.black)
@@ -2035,6 +2035,17 @@ struct DryRunPreviewSheet: View {
         .background(Color.plexDarkGray)
         .onExitCommand {
             onClose()
+        }
+        .alert(isPresented: $confirmApplyDryRun) {
+            Alert(
+                title: Text("Apply Dry Run Changes?"),
+                message: Text("This will apply TMDB metadata updates for \(viewModel.dryRunRows.count) episode(s) using the last dry-run mapping."),
+                primaryButton: .destructive(Text("Apply")) {
+                    viewModel.applyLastDryRunPreview()
+                    onClose()
+                },
+                secondaryButton: .cancel()
+            )
         }
     }
 }
