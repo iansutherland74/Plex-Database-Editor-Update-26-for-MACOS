@@ -740,6 +740,17 @@ struct EpisodesSection_New: View {
                                 .keyboardShortcut("f", modifiers: [.command, .option])
 
                                 UserFriendlyActionButton(
+                                    title: "Analyze in Plex",
+                                    icon: "waveform.path.ecg",
+                                    role: .secondary,
+                                    disabled: viewModel.episodes.isEmpty
+                                ) {
+                                    let orderedIds = orderedActionEpisodeIds()
+                                    viewModel.analyzePlexMetadata(itemIds: orderedIds, entityLabel: "episode")
+                                }
+                                .frame(width: 210)
+
+                                UserFriendlyActionButton(
                                     title: "Lock All Metadata",
                                     icon: "lock.fill",
                                     role: .secondary,
@@ -1493,6 +1504,14 @@ struct MoviesDetailView_New: View {
                                 }
 
                                 ActionButton(
+                                    title: "Analyze in Plex",
+                                    icon: "waveform.path.ecg",
+                                    disabled: selectedMovieIds.isEmpty
+                                ) {
+                                    viewModel.analyzePlexMetadata(itemIds: Array(selectedMovieIds), entityLabel: "movie")
+                                }
+
+                                ActionButton(
                                     title: "Lock All Metadata",
                                     icon: "lock.fill",
                                     disabled: selectedMovieIds.isEmpty
@@ -1773,7 +1792,7 @@ struct SettingsView_New: View {
                                     ActionButton(
                                         title: "Refresh TV Section",
                                         icon: "arrow.triangle.2.circlepath",
-                                        disabled: viewModel.selectedPlexTVSectionKey.isEmpty || viewModel.isRefreshingPlexSection
+                                        disabled: viewModel.selectedPlexTVSectionKey.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection
                                     ) {
                                         let label = tvSections.first(where: { $0.key == viewModel.selectedPlexTVSectionKey })?.title ?? "TV section"
                                         viewModel.refreshSelectedPlexSection(
@@ -1785,10 +1804,36 @@ struct SettingsView_New: View {
                                     ActionButton(
                                         title: "Refresh Movie Section",
                                         icon: "arrow.triangle.2.circlepath",
-                                        disabled: viewModel.selectedPlexMovieSectionKey.isEmpty || viewModel.isRefreshingPlexSection
+                                        disabled: viewModel.selectedPlexMovieSectionKey.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection
                                     ) {
                                         let label = movieSections.first(where: { $0.key == viewModel.selectedPlexMovieSectionKey })?.title ?? "Movie section"
                                         viewModel.refreshSelectedPlexSection(
+                                            sectionKey: viewModel.selectedPlexMovieSectionKey,
+                                            sectionLabel: label
+                                        )
+                                    }
+                                }
+
+                                HStack(spacing: 12) {
+                                    ActionButton(
+                                        title: "Analyze TV Section",
+                                        icon: "waveform.path.ecg",
+                                        disabled: viewModel.selectedPlexTVSectionKey.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection
+                                    ) {
+                                        let label = tvSections.first(where: { $0.key == viewModel.selectedPlexTVSectionKey })?.title ?? "TV section"
+                                        viewModel.analyzeSelectedPlexSection(
+                                            sectionKey: viewModel.selectedPlexTVSectionKey,
+                                            sectionLabel: label
+                                        )
+                                    }
+
+                                    ActionButton(
+                                        title: "Analyze Movie Section",
+                                        icon: "waveform.path.ecg",
+                                        disabled: viewModel.selectedPlexMovieSectionKey.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection
+                                    ) {
+                                        let label = movieSections.first(where: { $0.key == viewModel.selectedPlexMovieSectionKey })?.title ?? "Movie section"
+                                        viewModel.analyzeSelectedPlexSection(
                                             sectionKey: viewModel.selectedPlexMovieSectionKey,
                                             sectionLabel: label
                                         )
@@ -1800,6 +1845,16 @@ struct SettingsView_New: View {
                                         ProgressView()
                                             .progressViewStyle(CircularProgressViewStyle(tint: .plexOrange))
                                         Text("Queueing Plex section refresh...")
+                                            .font(.system(size: 12))
+                                            .foregroundColor(.plexTextSecondary)
+                                    }
+                                }
+
+                                if viewModel.isAnalyzingPlexSection {
+                                    HStack(spacing: 8) {
+                                        ProgressView()
+                                            .progressViewStyle(CircularProgressViewStyle(tint: .plexOrange))
+                                        Text("Queueing Plex section analyze...")
                                             .font(.system(size: 12))
                                             .foregroundColor(.plexTextSecondary)
                                     }

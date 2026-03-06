@@ -157,6 +157,7 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
     @Published var selectedPlexMovieSectionKey: String = ""
     @Published var isLoadingPlexSections = false
     @Published var isRefreshingPlexSection = false
+    @Published var isAnalyzingPlexSection = false
     @Published var statusMessage: String = "" {
         didSet {
             logBatchStatusIfNeeded(statusMessage)
@@ -1627,6 +1628,47 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
         }
     }
 
+    func analyzePlexMetadata(itemIds: [Int], entityLabel: String) {
+        let normalizedServerURL = normalizePlexServerURL(plexServerURL)
+        guard !normalizedServerURL.isEmpty,
+              let serverURL = URL(string: normalizedServerURL) else {
+            statusMessage = "Enter a valid Plex server URL"
+            return
+        }
+
+        let token = plexToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !token.isEmpty else {
+            statusMessage = "Enter Plex token before analyzing metadata"
+            return
+        }
+
+        let uniqueIds = Array(Set(itemIds)).sorted()
+        guard !uniqueIds.isEmpty else {
+            statusMessage = "Select at least one \(entityLabel) to analyze"
+            return
+        }
+
+        statusMessage = "Queueing Plex analyze for \(uniqueIds.count) \(entityLabel)(s)..."
+
+        Task {
+            var successCount = 0
+            var failureCount = 0
+
+            for id in uniqueIds {
+                do {
+                    try await queuePlexMetadataAnalyze(baseURL: serverURL, token: token, itemId: id)
+                    successCount += 1
+                } catch {
+                    failureCount += 1
+                }
+            }
+
+            DispatchQueue.main.async {
+                self.statusMessage = "Plex analyze queued: \(successCount) succeeded, \(failureCount) failed"
+            }
+        }
+    }
+
     func refreshSelectedPlexSection(sectionKey: String, sectionLabel: String) {
         let normalizedServerURL = normalizePlexServerURL(plexServerURL)
         guard !normalizedServerURL.isEmpty,
@@ -1661,6 +1703,45 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
                 DispatchQueue.main.async {
                     self.isRefreshingPlexSection = false
                     self.statusMessage = "Section refresh failed for \(sectionLabel): \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    func analyzeSelectedPlexSection(sectionKey: String, sectionLabel: String) {
+        let normalizedServerURL = normalizePlexServerURL(plexServerURL)
+        guard !normalizedServerURL.isEmpty,
+              let serverURL = URL(string: normalizedServerURL) else {
+            statusMessage = "Enter a valid Plex server URL"
+            return
+        }
+
+        let token = plexToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !token.isEmpty else {
+            statusMessage = "Enter Plex token before analyzing section"
+            return
+        }
+
+        let trimmedSectionKey = sectionKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedSectionKey.isEmpty else {
+            statusMessage = "Select a Plex section before analyzing"
+            return
+        }
+
+        isAnalyzingPlexSection = true
+        statusMessage = "Queueing Plex analyze for \(sectionLabel)..."
+
+        Task {
+            do {
+                try await queuePlexSectionAnalyze(baseURL: serverURL, token: token, sectionKey: trimmedSectionKey)
+                DispatchQueue.main.async {
+                    self.isAnalyzingPlexSection = false
+                    self.statusMessage = "Plex section analyze queued for \(sectionLabel)"
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self.isAnalyzingPlexSection = false
+                    self.statusMessage = "Section analyze failed for \(sectionLabel): \(error.localizedDescription)"
                 }
             }
         }
@@ -1898,6 +1979,43 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
         }
     }
 
+    private func queuePlexMetadataAnalyze(baseURL: URL, token: String, itemId: Int) async throws {
+        var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
+        components?.path = "/library/metadata/\(itemId)/analyze"
+        components?.queryItems = [
+            URLQueryItem(name: "X-Plex-Token", value: token)
+        ]
+
+        guard let url = components?.url else {
+            throw URLError(.badURL)
+        }
+
+        func runRequest(method: String) async throws -> HTTPURLResponse {
+            var request = URLRequest(url: url)
+            request.httpMethod = method
+            request.timeoutInterval = 12
+            let (_, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                throw URLError(.badServerResponse)
+            }
+            return http
+        }
+
+        let putResponse = try await runRequest(method: "PUT")
+        if (200...299).contains(putResponse.statusCode) {
+            return
+        }
+
+        let getResponse = try await runRequest(method: "GET")
+        guard (200...299).contains(getResponse.statusCode) else {
+            throw NSError(
+                domain: "PlexTVEditor",
+                code: getResponse.statusCode,
+                userInfo: [NSLocalizedDescriptionKey: "Metadata analyze failed for id \(itemId)"]
+            )
+        }
+    }
+
     private func queuePlexSectionRefresh(baseURL: URL, token: String, sectionKey: String) async throws {
         var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
         components?.path = "/library/sections/\(sectionKey)/refresh"
@@ -1931,6 +2049,43 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
                 domain: "PlexTVEditor",
                 code: getResponse.statusCode,
                 userInfo: [NSLocalizedDescriptionKey: "Section refresh failed for section \(sectionKey)"]
+            )
+        }
+    }
+
+    private func queuePlexSectionAnalyze(baseURL: URL, token: String, sectionKey: String) async throws {
+        var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
+        components?.path = "/library/sections/\(sectionKey)/analyze"
+        components?.queryItems = [
+            URLQueryItem(name: "X-Plex-Token", value: token)
+        ]
+
+        guard let url = components?.url else {
+            throw URLError(.badURL)
+        }
+
+        func runRequest(method: String) async throws -> HTTPURLResponse {
+            var request = URLRequest(url: url)
+            request.httpMethod = method
+            request.timeoutInterval = 15
+            let (_, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse else {
+                throw URLError(.badServerResponse)
+            }
+            return http
+        }
+
+        let putResponse = try await runRequest(method: "PUT")
+        if (200...299).contains(putResponse.statusCode) {
+            return
+        }
+
+        let getResponse = try await runRequest(method: "GET")
+        guard (200...299).contains(getResponse.statusCode) else {
+            throw NSError(
+                domain: "PlexTVEditor",
+                code: getResponse.statusCode,
+                userInfo: [NSLocalizedDescriptionKey: "Section analyze failed for section \(sectionKey)"]
             )
         }
     }
