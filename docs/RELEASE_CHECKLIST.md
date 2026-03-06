@@ -8,7 +8,7 @@
 1. Confirm branch and sync latest changes.
 2. Run release prep script.
 3. Review generated report and ensure no failures.
-4. Generate draft release notes from git history.
+4. Review generated release notes draft and adjust if needed.
 5. Run optional live smoke checks if targeting a local Plex environment.
 6. Confirm working tree is clean.
 7. Create release notes/tag.
@@ -47,13 +47,15 @@ Generate draft release notes:
 
 ```bash
 cd /Users/sutherland/repo
-./generate_release_notes.sh --from-tag v1.0.0 --to-ref HEAD
+./run_release_prep.sh --skip-build --notes-from-tag v1.0.0 --notes-to-ref HEAD
 ```
 
 ## Outputs
 - Report file: `docs/release_prep_report_<timestamp>.md`
+- Notes file: `docs/release_notes_<timestamp>.md` (unless `--notes-output` is used)
 - Report includes:
   - quality gate output
+  - release notes generation output
   - git status snapshot
   - recent commits
 

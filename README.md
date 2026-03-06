@@ -98,7 +98,7 @@ PLEX_SERVER_URL="http://127.0.0.1:32400" PLEX_TOKEN="<token>" ./run_live_plex_sm
 
 ## Run Release Prep
 
-Generate a release-prep report with quality gate evidence:
+Generate a release-prep report with quality gate evidence and auto-generated release notes:
 
 ```bash
 cd /Users/sutherland/repo
@@ -116,6 +116,12 @@ Useful variants:
 
 # Include live non-destructive write checks
 ./run_release_prep.sh --skip-build --include-live-write
+
+# Control release notes range
+./run_release_prep.sh --notes-from-tag v1.0.0 --notes-to-ref HEAD
+
+# Custom report + notes output paths
+./run_release_prep.sh --report docs/release_report.md --notes-output docs/release_notes_next.md
 ```
 
 Release checklist reference: `docs/RELEASE_CHECKLIST.md`
