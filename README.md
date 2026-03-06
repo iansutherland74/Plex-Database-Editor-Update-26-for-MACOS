@@ -96,6 +96,30 @@ Use explicit server/token if needed:
 PLEX_SERVER_URL="http://127.0.0.1:32400" PLEX_TOKEN="<token>" ./run_live_plex_smoke.sh
 ```
 
+## Run Release Prep
+
+Generate a release-prep report with quality gate evidence:
+
+```bash
+cd /Users/sutherland/repo
+./run_release_prep.sh
+```
+
+Useful variants:
+
+```bash
+# Skip build if already built in this session
+./run_release_prep.sh --skip-build
+
+# Include live read-only smoke checks
+./run_release_prep.sh --skip-build --include-live-smoke
+
+# Include live non-destructive write checks
+./run_release_prep.sh --skip-build --include-live-write
+```
+
+Release checklist reference: `docs/RELEASE_CHECKLIST.md`
+
 ## First Launch Setup
 
 In the app Settings tab, verify:

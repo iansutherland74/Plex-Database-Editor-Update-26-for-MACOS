@@ -113,6 +113,7 @@ if [ "$RUN_SHELL_LINT" -eq 1 ]; then
     run_step "Shell lint run_dry_run_tests.sh" bash -n ./run_dry_run_tests.sh
     run_step "Shell lint run_stage2_tests.sh" bash -n ./run_stage2_tests.sh
     run_step "Shell lint run_live_plex_smoke.sh" bash -n ./run_live_plex_smoke.sh
+    run_step "Shell lint run_release_prep.sh" bash -n ./run_release_prep.sh
     run_step "Shell lint run_quality_gate.sh" bash -n ./run_quality_gate.sh
 fi
 
