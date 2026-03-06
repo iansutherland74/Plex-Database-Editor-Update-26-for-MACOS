@@ -63,3 +63,4 @@ cd /Users/sutherland/repo
 - Live smoke checks require Plex token availability (`PLEX_TOKEN` or local defaults).
 - `run_live_plex_smoke.sh` never triggers empty-trash actions.
 - Remaining interactive UI-only checks are tracked in `docs/STAGE1_STABILIZATION_REPORT.md`.
+- Optional hosted path: run GitHub Actions workflow `Release Prep` (manual dispatch) to generate `release-prep-report` and `release-notes-draft` artifacts.

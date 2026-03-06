@@ -180,6 +180,17 @@ GitHub Actions workflow `macOS Swift Build` runs on pushes/PRs to `main` and val
 - Shell script syntax checks
 - `./run_live_plex_smoke.sh --help` sanity check
 
+Manual workflow `Release Prep` is available via `workflow_dispatch` and produces downloadable artifacts:
+
+- `release-prep-report`
+- `release-notes-draft`
+
+Optional inputs for manual run:
+
+- `from_tag`
+- `to_ref`
+- `notes_title`
+
 ## Known Build Warnings
 
 Current builds may show Swift `Sendable` capture warnings in `PlexTVEditorViewModel.swift`. They are non-blocking and do not stop app compilation.

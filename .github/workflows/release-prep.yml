@@ -1,0 +1,87 @@
+name: Release Prep
+
+on:
+  workflow_dispatch:
+    inputs:
+      from_tag:
+        description: "Optional start tag for release notes range (example: v1.0.0)"
+        required: false
+        type: string
+      to_ref:
+        description: "Target ref for release notes"
+        required: false
+        default: "HEAD"
+        type: string
+      notes_title:
+        description: "Title for generated release notes"
+        required: false
+        default: "Release Notes (CI Draft)"
+        type: string
+
+jobs:
+  release_prep:
+    runs-on: macos-14
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Show Swift Version
+        run: swift --version
+
+      - name: Compile Swift App Sources
+        run: |
+          set -e
+          cd PlexTVEditor
+          swiftc \
+            -parse-as-library \
+            -framework SwiftUI \
+            -framework Foundation \
+            -framework Cocoa \
+            -framework UserNotifications \
+            PlexTVEditorApp.swift \
+            ContentView.swift \
+            PlexTVEditorViewModel.swift \
+            PlexDatabaseManager.swift \
+            TMDBClient.swift \
+            -o /tmp/PlexTVEditor-release-prep-check
+
+      - name: Run Release Prep
+        run: |
+          set -e
+          chmod +x ./run_release_prep.sh ./run_quality_gate.sh ./generate_release_notes.sh ./run_live_plex_smoke.sh
+
+          FROM_TAG_INPUT="${{ github.event.inputs.from_tag }}"
+          TO_REF_INPUT="${{ github.event.inputs.to_ref }}"
+          NOTES_TITLE_INPUT="${{ github.event.inputs.notes_title }}"
+
+          cmd=(
+            ./run_release_prep.sh
+            --skip-build
+            --report /tmp/release_prep_report.md
+            --notes-output /tmp/release_notes.md
+            --notes-to-ref "$TO_REF_INPUT"
+            --notes-title "$NOTES_TITLE_INPUT"
+          )
+
+          if [ -n "$FROM_TAG_INPUT" ]; then
+            cmd+=(--notes-from-tag "$FROM_TAG_INPUT")
+          fi
+
+          "${cmd[@]}"
+
+      - name: Upload Release Prep Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-prep-report
+          path: /tmp/release_prep_report.md
+          if-no-files-found: error
+
+      - name: Upload Release Notes Draft
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-notes-draft
+          path: /tmp/release_notes.md
+          if-no-files-found: error
