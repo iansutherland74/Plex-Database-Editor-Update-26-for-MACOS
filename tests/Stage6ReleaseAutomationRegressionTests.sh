@@ -60,11 +60,14 @@ assert_command_fails "create_release_tag should fail for existing tag" \
     bash -lc "cd '$CLONE_DIR' && ./create_release_tag.sh --version $TAG_VERSION --skip-prep --apply"
 
 # Test 5: quality gate should succeed in clone.
-# If --skip-stage6 is supported, use it to prevent recursive Stage 6 invocation.
+# Skip Stage 6+ when supported to keep this regression focused and avoid deep nested stage recursion.
 QUALITY_GATE_ARGS=(--skip-build --skip-smoke-help)
-if bash -lc "cd '$CLONE_DIR' && ./run_quality_gate.sh --help | grep -q -- '--skip-stage6'"; then
-    QUALITY_GATE_ARGS+=(--skip-stage6)
-fi
+QUALITY_HELP="$(bash -lc "cd '$CLONE_DIR' && ./run_quality_gate.sh --help")"
+for skip_flag in --skip-stage6 --skip-stage7 --skip-stage8 --skip-stage9 --skip-stage10 --skip-stage11; do
+    if printf '%s' "$QUALITY_HELP" | grep -Fq -- "$skip_flag"; then
+        QUALITY_GATE_ARGS+=("$skip_flag")
+    fi
+done
 
 bash -lc "cd '$CLONE_DIR' && ./run_quality_gate.sh ${QUALITY_GATE_ARGS[*]} >/tmp/stage6_quality_gate.log 2>&1"
 

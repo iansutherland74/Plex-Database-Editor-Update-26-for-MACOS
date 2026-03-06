@@ -67,6 +67,19 @@ assert_file_contains "$TAG_MSG_A" "Range: ${BASE_FROM_TAG}..HEAD" "Tag message s
 assert_file_contains "$TAG_MSG_A" "Release notes: $NOTES_A" "Tag message should include notes path"
 assert_file_not_contains "$TAG_MSG_A" "Release prep report:" "Skip-prep tag message should not include prep report line"
 
+# For prep-flow provenance checks, stub quality gate in clone to avoid deep recursive stage execution.
+cat > "$CLONE_DIR/run_quality_gate.sh" <<'EOF'
+#!/bin/bash
+set -euo pipefail
+echo "Quality gate summary: PASS=1 FAIL=0"
+exit 0
+EOF
+chmod +x "$CLONE_DIR/run_quality_gate.sh"
+git -C "$CLONE_DIR" config user.name "Stage11 Test"
+git -C "$CLONE_DIR" config user.email "stage11@example.invalid"
+git -C "$CLONE_DIR" add run_quality_gate.sh
+git -C "$CLONE_DIR" commit -m "Stage11: stub quality gate" >/dev/null
+
 # Test 2: --apply with prep should generate report and include both notes/report paths in annotated tag.
 bash -lc "cd '$CLONE_DIR' && ./create_release_tag.sh --version $VERSION_WITH_PREP --to-ref HEAD --from-tag $BASE_FROM_TAG --apply --notes-output '$NOTES_B' --report-output '$REPORT_B'"
 assert_file_exists "$NOTES_B" "Prep apply should generate notes file"
