@@ -385,9 +385,13 @@ struct EpisodesSection_New: View {
                 // Selection Controls
                 HStack {
                     Button(action: {
-                        selectedEpisodeIds = Set(viewModel.episodes.map { $0.id })
+                        if allEpisodesSelected {
+                            selectedEpisodeIds.removeAll()
+                        } else {
+                            selectedEpisodeIds = Set(viewModel.episodes.map { $0.id })
+                        }
                     }) {
-                        Label("Select All", systemImage: "checkmark.circle")
+                        Label(allEpisodesSelected ? "Deselect All" : "Select All", systemImage: allEpisodesSelected ? "xmark.circle" : "checkmark.circle")
                             .font(.system(size: 12))
                     }
                     .buttonStyle(PlainButtonStyle())
@@ -798,6 +802,10 @@ struct EpisodesSection_New: View {
                 return lhs.season_number < rhs.season_number
             }
         return sortedCandidates.first
+    }
+
+    private var allEpisodesSelected: Bool {
+        !viewModel.episodes.isEmpty && selectedEpisodeIds.count == viewModel.episodes.count
     }
 
     private var editTargetEpisodeLabel: String {
@@ -2005,6 +2013,10 @@ struct DryRunPreviewSheet: View {
         Set(viewModel.dryRunRows.map { $0.episodeId }).intersection(selectedDryRunEpisodeIds).count
     }
 
+    private var allVisibleDryRunRowsSelected: Bool {
+        !visibleEpisodeIdSet.isEmpty && visibleEpisodeIdSet.isSubset(of: selectedDryRunEpisodeIds)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             HStack {
@@ -2045,8 +2057,12 @@ struct DryRunPreviewSheet: View {
 
                         Spacer()
 
-                        Button("Select Visible") {
-                            selectedDryRunEpisodeIds.formUnion(visibleEpisodeIdSet)
+                        Button(allVisibleDryRunRowsSelected ? "Deselect Visible" : "Select Visible") {
+                            if allVisibleDryRunRowsSelected {
+                                selectedDryRunEpisodeIds.subtract(visibleEpisodeIdSet)
+                            } else {
+                                selectedDryRunEpisodeIds.formUnion(visibleEpisodeIdSet)
+                            }
                         }
                         .buttonStyle(PlainButtonStyle())
                         .font(.system(size: 11, weight: .semibold))
