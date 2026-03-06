@@ -16,12 +16,14 @@ struct ContentView: View {
     @StateObject private var viewModel = PlexTVEditorViewModel()
     @State private var selectedTab: Int = 0
     @State private var selectedShowListId: Int?
+    @State private var showShortcutHelp = false
 
     var body: some View {
-        ZStack {
-            Color.plexDarkGray.ignoresSafeArea()
-            
-            VStack(spacing: 0) {
+        GeometryReader { proxy in
+            ZStack(alignment: .top) {
+                Color.plexDarkGray.ignoresSafeArea()
+
+                VStack(spacing: 0) {
                 // Top Navigation Bar
                 HStack(spacing: 0) {
                     Image(systemName: "play.rectangle.fill")
@@ -37,75 +39,128 @@ struct ContentView: View {
                     
                     Spacer()
                     
-                    // Tab Buttons
-                    HStack(spacing: 4) {
-                        TabButton(title: "TV Shows", icon: "tv", isSelected: selectedTab == 0) {
-                            selectedTab = 0
+                    // Tab Buttons + Utilities
+                    HStack(spacing: 8) {
+                        HStack(spacing: 4) {
+                            TabButton(title: "TV Shows", icon: "tv", isSelected: selectedTab == 0) {
+                                selectedTab = 0
+                            }
+                            TabButton(title: "Movies", icon: "film", isSelected: selectedTab == 3) {
+                                selectedTab = 3
+                            }
                         }
-                        TabButton(title: "Movies", icon: "film", isSelected: selectedTab == 3) {
-                            selectedTab = 3
-                        }
-                        TabButton(title: "Settings", icon: "gearshape", isSelected: selectedTab == 4) {
+                        .layoutPriority(1)
+
+                        Button {
                             selectedTab = 4
+                            viewModel.statusMessage = "Opened settings"
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "gearshape")
+                                    .font(.system(size: 13, weight: .semibold))
+                                Text("Settings")
+                                    .font(.system(size: 13, weight: .medium))
+                            }
+                            .foregroundColor(selectedTab == 4 ? .black : .plexTextPrimary)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(selectedTab == 4 ? Color.plexOrange : Color.plexLightGray.opacity(0.45))
+                            .cornerRadius(6)
                         }
+                        .buttonStyle(PlainButtonStyle())
+                        .keyboardShortcut(",", modifiers: [.command])
+
+                        Button {
+                            showShortcutHelp = true
+                        } label: {
+                            HStack(spacing: 5) {
+                                Image(systemName: "questionmark.circle")
+                                    .font(.system(size: 13, weight: .semibold))
+                                Text("Shortcuts")
+                                    .font(.system(size: 13, weight: .medium))
+                            }
+                            .foregroundColor(.black)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(Color.plexOrange)
+                            .cornerRadius(6)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                        .keyboardShortcut("/", modifiers: [.command, .shift])
                     }
                     .padding(.trailing, 20)
                 }
                 .frame(height: 60)
                 .background(Color.plexMediumGray)
                 
-                // Main Content Area
-                HSplitView {
-                    // Sidebar
-                    VStack(spacing: 0) {
-                        if selectedTab == 3 {
-                            // Movies List
-                            ScrollView {
-                                LazyVStack(spacing: 1) {
-                                    ForEach(viewModel.movies, id: \.id) { movie in
-                                        SidebarItemView(
-                                            title: movie.title,
-                                            subtitle: movie.year != nil ? "\(movie.year!)" : nil,
-                                            isSelected: false
-                                        )
+                    // Main Content Area
+                    Group {
+                        if selectedTab == 4 {
+                            ZStack {
+                                Color.plexDarkGray
+                                SettingsView_New(viewModel: viewModel)
+                            }
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        } else {
+                            HSplitView {
+                        // Sidebar
+                        VStack(spacing: 0) {
+                            if selectedTab == 3 {
+                                // Movies List
+                                ScrollView {
+                                    LazyVStack(spacing: 1) {
+                                        ForEach(viewModel.movies, id: \.id) { movie in
+                                            SidebarItemView(
+                                                title: movie.title,
+                                                subtitle: movie.year != nil ? "\(movie.year!)" : nil,
+                                                isSelected: false
+                                            )
+                                        }
                                     }
                                 }
-                            }
-                        } else if selectedTab != 4 {
-                            // TV Shows List
-                            ScrollView {
-                                LazyVStack(spacing: 1) {
-                                    ForEach(viewModel.shows, id: \.id) { show in
-                                        SidebarItemView(
-                                            title: show.title,
-                                            subtitle: show.year != nil ? "\(show.year!)" : nil,
-                                            isSelected: selectedShowListId == show.id
-                                        )
-                                        .onTapGesture {
-                                            selectedShowListId = show.id
-                                            viewModel.selectShow(show)
+                            } else {
+                                // TV Shows List
+                                ScrollView {
+                                    LazyVStack(spacing: 1) {
+                                        ForEach(viewModel.shows, id: \.id) { show in
+                                            SidebarItemView(
+                                                title: show.title,
+                                                subtitle: show.year != nil ? "\(show.year!)" : nil,
+                                                isSelected: selectedShowListId == show.id
+                                            )
+                                            .onTapGesture {
+                                                selectedShowListId = show.id
+                                                viewModel.selectShow(show)
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
-                    }
-                    .frame(minWidth: 250, idealWidth: 300)
-                    .background(Color.plexMediumGray)
-                    
-                    // Detail View
-                    ZStack {
-                        Color.plexDarkGray
-                        
-                        if selectedTab == 0 || selectedTab == 1 || selectedTab == 2 {
-                            TVShowDetailView(viewModel: viewModel, selectedTab: $selectedTab)
-                        } else if selectedTab == 3 {
-                            MoviesDetailView_New(viewModel: viewModel)
-                        } else {
-                            SettingsView_New(viewModel: viewModel)
+                        .frame(minWidth: 250, idealWidth: 300)
+                        .frame(maxHeight: .infinity, alignment: .top)
+                        .background(Color.plexMediumGray)
+
+                        // Detail View
+                        ZStack {
+                            Color.plexDarkGray
+
+                            switch selectedTab {
+                            case 0, 1, 2:
+                                TVShowDetailView(viewModel: viewModel, selectedTab: $selectedTab)
+                            case 3:
+                                MoviesDetailView_New(viewModel: viewModel)
+                            default:
+                                TVShowDetailView(viewModel: viewModel, selectedTab: $selectedTab)
+                            }
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            }
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
                         }
                     }
-                }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .layoutPriority(1)
                 
                 // Status Bar
                 HStack {
@@ -119,9 +174,16 @@ struct ContentView: View {
                 .frame(height: 28)
                 .padding(.horizontal, 20)
                 .background(Color.plexMediumGray)
+                }
+                .frame(width: proxy.size.width, height: proxy.size.height, alignment: .top)
             }
         }
         .preferredColorScheme(.dark)
+        .sheet(isPresented: $showShortcutHelp) {
+            ShortcutHelpSheet {
+                showShortcutHelp = false
+            }
+        }
         .onAppear {
             viewModel.loadShows()
             viewModel.loadMovies()
@@ -386,16 +448,20 @@ struct EpisodesSection_New: View {
                     Divider()
                         .background(Color.plexLightGray)
 
-                    VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 12) {
                         HStack {
-                            Text("Manual Edit")
-                                .font(.system(size: 13, weight: .medium))
+                            Text("Manual Editor")
+                                .font(.system(size: 14, weight: .semibold))
                                 .foregroundColor(.plexTextPrimary)
                             Spacer()
                             Text(editTargetEpisodeLabel)
                                 .font(.system(size: 11))
                                 .foregroundColor(.plexTextSecondary)
                         }
+
+                        Text("Pick an episode, update fields, then choose a clear action below.")
+                            .font(.system(size: 11))
+                            .foregroundColor(.plexTextSecondary)
 
                         if let context = viewModel.lastTMDBContext() {
                             HStack(spacing: 8) {
@@ -444,185 +510,222 @@ struct EpisodesSection_New: View {
                             }
                         }
 
-                        HStack(spacing: 10) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Episode Details")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(.plexOrange)
+
                             TextField("Episode title", text: $manualEditTitle)
                                 .textFieldStyle(PlainTextFieldStyle())
                                 .padding(8)
                                 .background(Color.plexLightGray)
                                 .cornerRadius(6)
 
-                            TextField("Season #", text: $manualEditSeasonNumber)
-                                .frame(width: 90)
-                                .textFieldStyle(PlainTextFieldStyle())
-                                .padding(8)
-                                .background(Color.plexLightGray)
-                                .cornerRadius(6)
+                            HStack(spacing: 10) {
+                                TextField("Season #", text: $manualEditSeasonNumber)
+                                    .frame(width: 120)
+                                    .textFieldStyle(PlainTextFieldStyle())
+                                    .padding(8)
+                                    .background(Color.plexLightGray)
+                                    .cornerRadius(6)
 
-                            TextField("Episode #", text: $manualEditEpisodeNumber)
-                                .frame(width: 100)
-                                .textFieldStyle(PlainTextFieldStyle())
-                                .padding(8)
-                                .background(Color.plexLightGray)
-                                .cornerRadius(6)
+                                TextField("Episode #", text: $manualEditEpisodeNumber)
+                                    .frame(width: 120)
+                                    .textFieldStyle(PlainTextFieldStyle())
+                                    .padding(8)
+                                    .background(Color.plexLightGray)
+                                    .cornerRadius(6)
 
-                            Spacer()
-                        }
+                                if let episode = editTargetEpisode {
+                                    Text("Editing: S\(episode.season_number)E\(episode.episode_number)")
+                                        .font(.system(size: 11))
+                                        .foregroundColor(.plexTextSecondary)
+                                }
 
-                        HStack(spacing: 10) {
-                            TextField("TMDB Season #", text: $manualTMDBSeasonNumber)
-                                .frame(width: 110)
-                                .textFieldStyle(PlainTextFieldStyle())
-                                .padding(8)
-                                .background(Color.plexLightGray)
-                                .cornerRadius(6)
-
-                            TextField("TMDB Episode #", text: $manualTMDBEpisodeNumber)
-                                .frame(width: 120)
-                                .textFieldStyle(PlainTextFieldStyle())
-                                .padding(8)
-                                .background(Color.plexLightGray)
-                                .cornerRadius(6)
-
-                            TextField("TMDB URL or Show ID (optional)", text: $manualTMDBShowRef)
-                                .textFieldStyle(PlainTextFieldStyle())
-                                .padding(8)
-                                .background(Color.plexLightGray)
-                                .cornerRadius(6)
-                        }
-
-                        HStack(spacing: 10) {
-                            TextField("TMDB Start Code (e.g. S2E1)", text: $manualTMDBCode)
-                                .frame(width: 220)
-                                .textFieldStyle(PlainTextFieldStyle())
-                                .padding(8)
-                                .background(Color.plexLightGray)
-                                .cornerRadius(6)
-
-                            TextField("Episode Count", text: $manualEpisodeCount)
-                                .frame(width: 120)
-                                .textFieldStyle(PlainTextFieldStyle())
-                                .padding(8)
-                                .background(Color.plexLightGray)
-                                .cornerRadius(6)
-
-                            ActionButton(
-                                title: "Auto Select",
-                                icon: "checklist",
-                                disabled: editTargetEpisode == nil
-                            ) {
-                                autoSelectEpisodeRange()
+                                Spacer()
                             }
-                            .keyboardShortcut("r", modifiers: [.command, .option])
-
-                            Spacer()
                         }
+                        .padding(12)
+                        .background(Color.plexLightGray.opacity(0.22))
+                        .cornerRadius(8)
 
-                        HStack(spacing: 12) {
-                            ActionButton(
-                                title: "Save",
-                                icon: "square.and.arrow.down",
-                                disabled: editTargetEpisode == nil
-                            ) {
-                                guard let episode = editTargetEpisode else { return }
-                                let parsedSeason = Int(manualEditSeasonNumber.trimmingCharacters(in: .whitespacesAndNewlines)) ?? episode.season_number
-                                let parsedNumber = Int(manualEditEpisodeNumber.trimmingCharacters(in: .whitespacesAndNewlines)) ?? episode.episode_number
-                                viewModel.updateEpisodeTitleAndNumber(
-                                    episodeId: episode.id,
-                                    title: manualEditTitle,
-                                    seasonNumber: parsedSeason,
-                                    episodeNumber: parsedNumber
-                                )
-                                selectedEpisodeIds.removeAll()
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("TMDB Mapping")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(.plexOrange)
+
+                            HStack(spacing: 10) {
+                                TextField("TMDB Season #", text: $manualTMDBSeasonNumber)
+                                    .frame(width: 140)
+                                    .textFieldStyle(PlainTextFieldStyle())
+                                    .padding(8)
+                                    .background(Color.plexLightGray)
+                                    .cornerRadius(6)
+
+                                TextField("TMDB Episode #", text: $manualTMDBEpisodeNumber)
+                                    .frame(width: 140)
+                                    .textFieldStyle(PlainTextFieldStyle())
+                                    .padding(8)
+                                    .background(Color.plexLightGray)
+                                    .cornerRadius(6)
+
+                                TextField("TMDB URL or Show ID (optional)", text: $manualTMDBShowRef)
+                                    .textFieldStyle(PlainTextFieldStyle())
+                                    .padding(8)
+                                    .background(Color.plexLightGray)
+                                    .cornerRadius(6)
                             }
-                            .keyboardShortcut("s", modifiers: [.command])
 
-                            ActionButton(
-                                title: "TV Metadata",
-                                icon: "magnifyingglass",
-                                disabled: viewModel.episodes.isEmpty
-                            ) {
-                                let orderedSeasonEpisodes = viewModel.episodes
-                                    .sorted { lhs, rhs in
-                                        if lhs.season_number == rhs.season_number {
-                                            return lhs.episode_number < rhs.episode_number
+                            HStack(spacing: 10) {
+                                TextField("TMDB Start Code (e.g. S2E1)", text: $manualTMDBCode)
+                                    .frame(width: 220)
+                                    .textFieldStyle(PlainTextFieldStyle())
+                                    .padding(8)
+                                    .background(Color.plexLightGray)
+                                    .cornerRadius(6)
+
+                                TextField("Episode Count", text: $manualEpisodeCount)
+                                    .frame(width: 120)
+                                    .textFieldStyle(PlainTextFieldStyle())
+                                    .padding(8)
+                                    .background(Color.plexLightGray)
+                                    .cornerRadius(6)
+
+                                UserFriendlyActionButton(
+                                    title: "Auto Select",
+                                    icon: "checklist",
+                                    role: .secondary,
+                                    disabled: editTargetEpisode == nil
+                                ) {
+                                    autoSelectEpisodeRange()
+                                }
+                                .frame(width: 170)
+                                .keyboardShortcut("r", modifiers: [.command, .option])
+
+                                Spacer()
+                            }
+                        }
+                        .padding(12)
+                        .background(Color.plexLightGray.opacity(0.22))
+                        .cornerRadius(8)
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Actions")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(.plexOrange)
+
+                            HStack(spacing: 10) {
+                                UserFriendlyActionButton(
+                                    title: "Save Manual Edit",
+                                    icon: "square.and.arrow.down",
+                                    role: .primary,
+                                    disabled: editTargetEpisode == nil
+                                ) {
+                                    guard let episode = editTargetEpisode else { return }
+                                    let parsedSeason = Int(manualEditSeasonNumber.trimmingCharacters(in: .whitespacesAndNewlines)) ?? episode.season_number
+                                    let parsedNumber = Int(manualEditEpisodeNumber.trimmingCharacters(in: .whitespacesAndNewlines)) ?? episode.episode_number
+                                    viewModel.updateEpisodeTitleAndNumber(
+                                        episodeId: episode.id,
+                                        title: manualEditTitle,
+                                        seasonNumber: parsedSeason,
+                                        episodeNumber: parsedNumber
+                                    )
+                                    selectedEpisodeIds.removeAll()
+                                }
+                                .frame(width: 210)
+                                .keyboardShortcut("s", modifiers: [.command])
+
+                                UserFriendlyActionButton(
+                                    title: "Apply TV Metadata",
+                                    icon: "magnifyingglass",
+                                    role: .primary,
+                                    disabled: viewModel.episodes.isEmpty
+                                ) {
+                                    let orderedSeasonEpisodes = viewModel.episodes
+                                        .sorted { lhs, rhs in
+                                            if lhs.season_number == rhs.season_number {
+                                                return lhs.episode_number < rhs.episode_number
+                                            }
+                                            return lhs.season_number < rhs.season_number
                                         }
-                                        return lhs.season_number < rhs.season_number
+
+                                    guard let anchorEpisode = orderedSeasonEpisodes.first else { return }
+
+                                    let code = manualTMDBCode.trimmingCharacters(in: .whitespacesAndNewlines)
+                                    let parsedFromCode = PlexTVEditorViewModel.parseSeasonEpisodeCode(code)
+
+                                    let parsedTMDBSeason = parsedFromCode?.season
+                                        ?? Int(manualTMDBSeasonNumber.trimmingCharacters(in: .whitespacesAndNewlines))
+                                        ?? anchorEpisode.season_number
+                                    let parsedTMDBEpisode = parsedFromCode?.episode
+                                        ?? Int(manualTMDBEpisodeNumber.trimmingCharacters(in: .whitespacesAndNewlines))
+                                        ?? anchorEpisode.episode_number
+
+                                    let orderedIds: [Int]
+                                    if selectedEpisodeIds.isEmpty {
+                                        orderedIds = orderedSeasonEpisodes.map { $0.id }
+                                    } else {
+                                        orderedIds = orderedSeasonEpisodes
+                                            .filter { selectedEpisodeIds.contains($0.id) }
+                                            .map { $0.id }
                                     }
 
-                                guard let anchorEpisode = orderedSeasonEpisodes.first else { return }
-
-                                let code = manualTMDBCode.trimmingCharacters(in: .whitespacesAndNewlines)
-                                let parsedFromCode = PlexTVEditorViewModel.parseSeasonEpisodeCode(code)
-
-                                let parsedTMDBSeason = parsedFromCode?.season
-                                    ?? Int(manualTMDBSeasonNumber.trimmingCharacters(in: .whitespacesAndNewlines))
-                                    ?? anchorEpisode.season_number
-                                let parsedTMDBEpisode = parsedFromCode?.episode
-                                    ?? Int(manualTMDBEpisodeNumber.trimmingCharacters(in: .whitespacesAndNewlines))
-                                    ?? anchorEpisode.episode_number
-
-                                let orderedIds: [Int]
-                                if selectedEpisodeIds.isEmpty {
-                                    orderedIds = orderedSeasonEpisodes.map { $0.id }
-                                } else {
-                                    orderedIds = orderedSeasonEpisodes
-                                        .filter { selectedEpisodeIds.contains($0.id) }
-                                        .map { $0.id }
+                                    viewModel.applyTMDBMetadataToEpisodes(
+                                        episodeIds: orderedIds,
+                                        tmdbStartSeasonNumber: parsedTMDBSeason,
+                                        tmdbStartEpisodeNumber: parsedTMDBEpisode,
+                                        tmdbShowIdOrURL: manualTMDBShowRef
+                                    )
+                                    manualEditSeasonNumber = String(parsedTMDBSeason)
+                                    manualEditEpisodeNumber = String(parsedTMDBEpisode)
+                                    manualTMDBSeasonNumber = String(parsedTMDBSeason)
+                                    manualTMDBEpisodeNumber = String(parsedTMDBEpisode)
+                                    selectedEpisodeIds.removeAll()
                                 }
+                                .frame(width: 210)
+                                .keyboardShortcut("m", modifiers: [.command])
 
-                                viewModel.applyTMDBMetadataToEpisodes(
-                                    episodeIds: orderedIds,
-                                    tmdbStartSeasonNumber: parsedTMDBSeason,
-                                    tmdbStartEpisodeNumber: parsedTMDBEpisode,
-                                    tmdbShowIdOrURL: manualTMDBShowRef
-                                )
-                                manualEditSeasonNumber = String(parsedTMDBSeason)
-                                manualEditEpisodeNumber = String(parsedTMDBEpisode)
-                                manualTMDBSeasonNumber = String(parsedTMDBSeason)
-                                manualTMDBEpisodeNumber = String(parsedTMDBEpisode)
-                                selectedEpisodeIds.removeAll()
+                                Spacer()
                             }
-                            .keyboardShortcut("m", modifiers: [.command])
 
-                            ActionButton(
-                                title: "Smart Thumb Season",
-                                icon: "photo.stack",
-                                disabled: viewModel.episodes.isEmpty
-                            ) {
-                                let manualShowRefTrimmed = manualTMDBShowRef.trimmingCharacters(in: .whitespacesAndNewlines)
-                                let resolvedShowRef = manualShowRefTrimmed.isEmpty ? nil : manualShowRefTrimmed
+                            HStack(spacing: 10) {
+                                UserFriendlyActionButton(
+                                    title: "Smart Thumb Season",
+                                    icon: "photo.stack",
+                                    role: .secondary,
+                                    disabled: viewModel.episodes.isEmpty
+                                ) {
+                                    let manualShowRefTrimmed = manualTMDBShowRef.trimmingCharacters(in: .whitespacesAndNewlines)
+                                    let resolvedShowRef = manualShowRefTrimmed.isEmpty ? nil : manualShowRefTrimmed
 
-                                viewModel.smartRemapCurrentSeasonThumbnailsFromTMDB(tmdbShowIdOrURL: resolvedShowRef)
-                                selectedEpisodeIds.removeAll()
-                            }
-                            .keyboardShortcut("t", modifiers: [.command, .option])
-
-                            Button {
-                                previewEpisodeId = editTargetEpisode?.id ?? viewModel.episodes.sorted { $0.episode_number < $1.episode_number }.first?.id
-                                showPlexPreviewPanel = true
-                            } label: {
-                                HStack(spacing: 6) {
-                                    Image(systemName: "rectangle.on.rectangle")
-                                        .font(.system(size: 12))
-                                    Text("View Plex Panel")
-                                        .font(.system(size: 12, weight: .medium))
+                                    viewModel.smartRemapCurrentSeasonThumbnailsFromTMDB(tmdbShowIdOrURL: resolvedShowRef)
+                                    selectedEpisodeIds.removeAll()
                                 }
-                                .foregroundColor(viewModel.episodes.isEmpty ? .plexTextSecondary : .black)
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 8)
-                                .background(viewModel.episodes.isEmpty ? Color.plexLightGray.opacity(0.3) : Color.plexOrange)
-                                .cornerRadius(6)
-                            }
-                            .buttonStyle(PlainButtonStyle())
-                            .disabled(viewModel.episodes.isEmpty)
-                            .keyboardShortcut("p", modifiers: [.command])
+                                .frame(width: 210)
+                                .keyboardShortcut("t", modifiers: [.command, .option])
 
-                            Spacer()
+                                UserFriendlyActionButton(
+                                    title: "Open Plex Preview",
+                                    icon: "rectangle.on.rectangle",
+                                    role: .accent,
+                                    disabled: viewModel.episodes.isEmpty
+                                ) {
+                                    previewEpisodeId = editTargetEpisode?.id ?? viewModel.episodes.sorted { $0.episode_number < $1.episode_number }.first?.id
+                                    showPlexPreviewPanel = true
+                                }
+                                .frame(width: 210)
+                                .keyboardShortcut("p", modifiers: [.command])
+
+                                Spacer()
+                            }
+
+                            Text("TV Metadata applies TMDB metadata and numbering. Smart Thumb Season keeps the same season/episode numbers and refreshes artwork metadata only.")
+                                .font(.system(size: 11))
+                                .foregroundColor(.plexTextSecondary)
                         }
-
-                        Text("TV Metadata applies TMDB metadata and numbering. Smart Thumb Season keeps the same season/episode numbers and refreshes artwork metadata only.")
-                            .font(.system(size: 11))
-                            .foregroundColor(.plexTextSecondary)
+                        .padding(12)
+                        .background(Color.plexLightGray.opacity(0.22))
+                        .cornerRadius(8)
                     }
                     
                     Button(action: { showRemapPanel.toggle() }) {
@@ -1353,6 +1456,10 @@ struct SettingsView_New: View {
             VStack(alignment: .leading, spacing: 20) {
                 SectionCard(title: "Configuration", icon: "gearshape") {
                     VStack(alignment: .leading, spacing: 16) {
+                        Text("Editable settings")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(.plexOrange)
+
                         SettingField(
                             label: "TMDB API Key",
                             hint: "Required for fetching TV show metadata",
@@ -1434,6 +1541,10 @@ struct SettingsView_New: View {
                                 viewModel.clearChangeLog()
                             }
                         }
+
+                        Text("After editing, click Save Settings to apply your changes.")
+                            .font(.system(size: 11))
+                            .foregroundColor(.plexTextSecondary)
                     }
                     .padding()
                 }
@@ -1473,17 +1584,21 @@ struct SettingField: View {
             
             HStack {
                 if isSecure {
-                    SecureField("", text: $text)
-                        .textFieldStyle(PlainTextFieldStyle())
+                    SecureField("Enter \(label)", text: $text)
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                        .font(.system(size: 13))
                         .padding(8)
-                        .background(Color.plexLightGray)
-                        .cornerRadius(6)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.black.opacity(0.22))
+                        .cornerRadius(8)
                 } else {
-                    TextField("", text: $text)
-                        .textFieldStyle(PlainTextFieldStyle())
+                    TextField("Enter \(label)", text: $text)
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                        .font(.system(size: 13))
                         .padding(8)
-                        .background(Color.plexLightGray)
-                        .cornerRadius(6)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.black.opacity(0.22))
+                        .cornerRadius(8)
                 }
                 
                 if let action = browseAction {
@@ -1499,6 +1614,9 @@ struct SettingField: View {
                     .buttonStyle(PlainButtonStyle())
                 }
             }
+            .padding(6)
+            .background(Color.plexLightGray.opacity(0.25))
+            .cornerRadius(8)
         }
     }
 }
@@ -1585,6 +1703,55 @@ struct ActionButton: View {
     }
 }
 
+enum FriendlyButtonRole {
+    case primary
+    case secondary
+    case accent
+
+    var backgroundColor: Color {
+        switch self {
+        case .primary:
+            return .plexOrange
+        case .secondary:
+            return Color.plexOrange.opacity(0.85)
+        case .accent:
+            return Color(red: 0.30, green: 0.55, blue: 0.76)
+        }
+    }
+
+    var foregroundColor: Color {
+        .black
+    }
+}
+
+struct UserFriendlyActionButton: View {
+    let title: String
+    let icon: String
+    let role: FriendlyButtonRole
+    let disabled: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 7) {
+                Image(systemName: icon)
+                    .font(.system(size: 12, weight: .semibold))
+                Text(title)
+                    .font(.system(size: 12, weight: .semibold))
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity)
+            .foregroundColor(disabled ? .plexTextSecondary : role.foregroundColor)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(disabled ? Color.plexLightGray.opacity(0.35) : role.backgroundColor)
+            .cornerRadius(8)
+        }
+        .buttonStyle(PlainButtonStyle())
+        .disabled(disabled)
+    }
+}
+
 struct SmallUtilityButton: View {
     let title: String
     let icon: String
@@ -1605,6 +1772,130 @@ struct SmallUtilityButton: View {
             .cornerRadius(8)
         }
         .buttonStyle(PlainButtonStyle())
+    }
+}
+
+struct ShortcutHelpSheet: View {
+    let onClose: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Keyboard Shortcuts")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(.plexTextPrimary)
+                Spacer()
+                Button("Close") {
+                    onClose()
+                }
+                .buttonStyle(PlainButtonStyle())
+                .foregroundColor(.plexOrange)
+            }
+            .padding(.horizontal, 16)
+            .frame(height: 46)
+            .background(Color.plexMediumGray)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    ShortcutSectionCard(title: "Global") {
+                        ShortcutRow(keys: "Cmd+Shift+/", action: "Open Shortcuts")
+                    }
+
+                    ShortcutSectionCard(title: "Episodes") {
+                        ShortcutRow(keys: "Cmd+A", action: "Select all episodes")
+                        ShortcutRow(keys: "Cmd+Shift+A", action: "Clear episode selection")
+                        ShortcutRow(keys: "Cmd+S", action: "Save manual episode edit")
+                        ShortcutRow(keys: "Cmd+M", action: "Apply TV Metadata remap")
+                        ShortcutRow(keys: "Cmd+Option+T", action: "Smart Thumb Season")
+                        ShortcutRow(keys: "Cmd+P", action: "View Plex Panel")
+                        ShortcutRow(keys: "Cmd+Option+R", action: "Auto Select range (Episodes tab)")
+                    }
+
+                    ShortcutSectionCard(title: "Settings") {
+                        ShortcutRow(keys: "Cmd+Shift+S", action: "Save settings")
+                        ShortcutRow(keys: "Cmd+Option+K", action: "Test connection")
+                        ShortcutRow(keys: "Cmd+Option+R", action: "Reload library (Settings tab)")
+                        ShortcutRow(keys: "Cmd+Option+E", action: "Export change log CSV")
+                        ShortcutRow(keys: "Cmd+Option+J", action: "Export change log JSON")
+                    }
+
+                    Text("Some shortcuts are context-sensitive and only run in the active tab.")
+                        .font(.system(size: 11))
+                        .foregroundColor(.plexTextSecondary)
+                        .padding(.top, 2)
+                }
+                .padding(16)
+            }
+            .background(Color.plexDarkGray)
+
+            HStack {
+                Spacer()
+                Button("Close") {
+                    onClose()
+                }
+                .buttonStyle(PlainButtonStyle())
+                .foregroundColor(.black)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(Color.plexOrange)
+                .cornerRadius(6)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(Color.plexMediumGray)
+        }
+        .frame(minWidth: 620, idealWidth: 700, minHeight: 460, idealHeight: 540)
+        .background(Color.plexDarkGray)
+        .onExitCommand {
+            onClose()
+        }
+    }
+}
+
+struct ShortcutSectionCard<Content: View>: View {
+    let title: String
+    let content: Content
+
+    init(title: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(.plexOrange)
+            content
+        }
+        .padding(12)
+        .background(Color.plexMediumGray.opacity(0.45))
+        .cornerRadius(10)
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color.plexLightGray, lineWidth: 1)
+        )
+    }
+}
+
+struct ShortcutRow: View {
+    let keys: String
+    let action: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text(keys)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundColor(.black)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color.plexOrange)
+                .cornerRadius(6)
+            Text(action)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(.plexTextPrimary)
+            Spacer()
+        }
     }
 }
 
