@@ -64,6 +64,13 @@ cd /Users/sutherland/repo
 ./run_stage9_tests.sh
 ```
 
+Run Stage 10 live smoke safety contract tests directly:
+
+```bash
+cd /Users/sutherland/repo
+./run_stage10_tests.sh
+```
+
 Run full release prep (includes build):
 
 ```bash
