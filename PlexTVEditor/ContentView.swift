@@ -355,6 +355,7 @@ struct SeasonRowView: View {
 // MARK: - Episodes Section
 struct EpisodesSection_New: View {
     @ObservedObject var viewModel: PlexTVEditorViewModel
+    private let episodeListViewportHeight: CGFloat = 210
     @State private var selectedEpisodeIds: Set<Int> = []
     @State private var autoSelectSeasonEpisodes = false
     @State private var showPlexPreviewPanel = false
@@ -376,6 +377,7 @@ struct EpisodesSection_New: View {
     @State private var remapUpdateYear = true
     @State private var remapRequireTMDBMatch = false
     @State private var remapCode = ""
+    @State private var showDryRunSheet = false
     
     var body: some View {
         SectionCard(title: "Episodes", icon: "list.bullet.rectangle") {
@@ -420,7 +422,7 @@ struct EpisodesSection_New: View {
                         .foregroundColor(.plexTextSecondary)
                         .padding()
                 } else {
-                    ScrollView {
+                    ScrollView(.vertical, showsIndicators: true) {
                         LazyVStack(spacing: 4) {
                             ForEach(viewModel.episodes, id: \.id) { episode in
                                 EpisodeRowView(
@@ -437,7 +439,13 @@ struct EpisodesSection_New: View {
                         }
                         .padding(.horizontal)
                     }
-                    .frame(maxHeight: 300)
+                    // Hard-cap to roughly 3 rows so manual editor stays in view.
+                    .frame(
+                        minHeight: episodeListViewportHeight,
+                        idealHeight: episodeListViewportHeight,
+                        maxHeight: episodeListViewportHeight
+                    )
+                    .clipped()
                 }
                 
                 Divider()
@@ -641,45 +649,19 @@ struct EpisodesSection_New: View {
                                     role: .primary,
                                     disabled: viewModel.episodes.isEmpty
                                 ) {
-                                    let orderedSeasonEpisodes = viewModel.episodes
-                                        .sorted { lhs, rhs in
-                                            if lhs.season_number == rhs.season_number {
-                                                return lhs.episode_number < rhs.episode_number
-                                            }
-                                            return lhs.season_number < rhs.season_number
-                                        }
-
-                                    guard let anchorEpisode = orderedSeasonEpisodes.first else { return }
-
-                                    let code = manualTMDBCode.trimmingCharacters(in: .whitespacesAndNewlines)
-                                    let parsedFromCode = PlexTVEditorViewModel.parseSeasonEpisodeCode(code)
-
-                                    let parsedTMDBSeason = parsedFromCode?.season
-                                        ?? Int(manualTMDBSeasonNumber.trimmingCharacters(in: .whitespacesAndNewlines))
-                                        ?? anchorEpisode.season_number
-                                    let parsedTMDBEpisode = parsedFromCode?.episode
-                                        ?? Int(manualTMDBEpisodeNumber.trimmingCharacters(in: .whitespacesAndNewlines))
-                                        ?? anchorEpisode.episode_number
-
-                                    let orderedIds: [Int]
-                                    if selectedEpisodeIds.isEmpty {
-                                        orderedIds = orderedSeasonEpisodes.map { $0.id }
-                                    } else {
-                                        orderedIds = orderedSeasonEpisodes
-                                            .filter { selectedEpisodeIds.contains($0.id) }
-                                            .map { $0.id }
-                                    }
+                                    let orderedIds = orderedActionEpisodeIds()
+                                    guard let mapping = resolvedTMDBMappingStart() else { return }
 
                                     viewModel.applyTMDBMetadataToEpisodes(
                                         episodeIds: orderedIds,
-                                        tmdbStartSeasonNumber: parsedTMDBSeason,
-                                        tmdbStartEpisodeNumber: parsedTMDBEpisode,
+                                        tmdbStartSeasonNumber: mapping.season,
+                                        tmdbStartEpisodeNumber: mapping.episode,
                                         tmdbShowIdOrURL: manualTMDBShowRef
                                     )
-                                    manualEditSeasonNumber = String(parsedTMDBSeason)
-                                    manualEditEpisodeNumber = String(parsedTMDBEpisode)
-                                    manualTMDBSeasonNumber = String(parsedTMDBSeason)
-                                    manualTMDBEpisodeNumber = String(parsedTMDBEpisode)
+                                    manualEditSeasonNumber = String(mapping.season)
+                                    manualEditEpisodeNumber = String(mapping.episode)
+                                    manualTMDBSeasonNumber = String(mapping.season)
+                                    manualTMDBEpisodeNumber = String(mapping.episode)
                                     selectedEpisodeIds.removeAll()
                                 }
                                 .frame(width: 210)
@@ -715,6 +697,26 @@ struct EpisodesSection_New: View {
                                 }
                                 .frame(width: 210)
                                 .keyboardShortcut("p", modifiers: [.command])
+
+                                UserFriendlyActionButton(
+                                    title: "Dry Run Diff",
+                                    icon: "doc.text.magnifyingglass",
+                                    role: .secondary,
+                                    disabled: viewModel.episodes.isEmpty
+                                ) {
+                                    let orderedIds = orderedActionEpisodeIds()
+                                    guard let mapping = resolvedTMDBMappingStart() else { return }
+
+                                    viewModel.runTMDBDryRunPreview(
+                                        episodeIds: orderedIds,
+                                        tmdbStartSeasonNumber: mapping.season,
+                                        tmdbStartEpisodeNumber: mapping.episode,
+                                        tmdbShowIdOrURL: manualTMDBShowRef
+                                    )
+                                    showDryRunSheet = true
+                                }
+                                .frame(width: 210)
+                                .keyboardShortcut("d", modifiers: [.command, .option])
 
                                 Spacer()
                             }
@@ -778,6 +780,11 @@ struct EpisodesSection_New: View {
                     showPlexPreviewPanel = false
                 }
             )
+        }
+        .sheet(isPresented: $showDryRunSheet) {
+            DryRunPreviewSheet(viewModel: viewModel) {
+                showDryRunSheet = false
+            }
         }
     }
 
@@ -877,6 +884,51 @@ struct EpisodesSection_New: View {
         board.clearContents()
         board.setString(value, forType: .string)
         viewModel.statusMessage = "Copied \(label): \(value)"
+    }
+
+    private func orderedActionEpisodeIds() -> [Int] {
+        let orderedSeasonEpisodes = viewModel.episodes
+            .sorted { lhs, rhs in
+                if lhs.season_number == rhs.season_number {
+                    return lhs.episode_number < rhs.episode_number
+                }
+                return lhs.season_number < rhs.season_number
+            }
+
+        if selectedEpisodeIds.isEmpty {
+            return orderedSeasonEpisodes.map { $0.id }
+        }
+
+        return orderedSeasonEpisodes
+            .filter { selectedEpisodeIds.contains($0.id) }
+            .map { $0.id }
+    }
+
+    private func resolvedTMDBMappingStart() -> (season: Int, episode: Int)? {
+        let orderedSeasonEpisodes = viewModel.episodes
+            .sorted { lhs, rhs in
+                if lhs.season_number == rhs.season_number {
+                    return lhs.episode_number < rhs.episode_number
+                }
+                return lhs.season_number < rhs.season_number
+            }
+
+        guard let anchorEpisode = orderedSeasonEpisodes.first else {
+            viewModel.statusMessage = "No episodes loaded"
+            return nil
+        }
+
+        let code = manualTMDBCode.trimmingCharacters(in: .whitespacesAndNewlines)
+        let parsedFromCode = PlexTVEditorViewModel.parseSeasonEpisodeCode(code)
+
+        let season = parsedFromCode?.season
+            ?? Int(manualTMDBSeasonNumber.trimmingCharacters(in: .whitespacesAndNewlines))
+            ?? anchorEpisode.season_number
+        let episode = parsedFromCode?.episode
+            ?? Int(manualTMDBEpisodeNumber.trimmingCharacters(in: .whitespacesAndNewlines))
+            ?? anchorEpisode.episode_number
+
+        return (season, episode)
     }
 }
 
@@ -1450,6 +1502,8 @@ struct MovieRowView: View {
 // MARK: - Settings View
 struct SettingsView_New: View {
     @ObservedObject var viewModel: PlexTVEditorViewModel
+    @State private var restoringBackupPath: String?
+    @State private var pendingRestoreBackup: BackupFileItem?
     
     var body: some View {
         ScrollView {
@@ -1548,6 +1602,77 @@ struct SettingsView_New: View {
                     }
                     .padding()
                 }
+
+                SectionCard(title: "Backup Restore", icon: "externaldrive.badge.timemachine") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Backup files from ~/.plex_tv_editor_backups")
+                            .font(.system(size: 12))
+                            .foregroundColor(.plexTextSecondary)
+
+                        HStack(spacing: 12) {
+                            ActionButton(title: "Refresh Backups", icon: "arrow.clockwise", disabled: false) {
+                                viewModel.refreshBackupFiles()
+                            }
+                            .keyboardShortcut("b", modifiers: [.command, .option])
+
+                            Text("\(viewModel.backupFiles.count) file(s) found")
+                                .font(.system(size: 12))
+                                .foregroundColor(.plexTextSecondary)
+                        }
+
+                        if viewModel.backupFiles.isEmpty {
+                            Text("No backups found yet. Run any write action to generate one.")
+                                .font(.system(size: 12))
+                                .foregroundColor(.plexTextSecondary)
+                        } else {
+                            ScrollView {
+                                VStack(spacing: 8) {
+                                    ForEach(Array(viewModel.backupFiles.prefix(25)), id: \.id) { backup in
+                                        HStack(spacing: 10) {
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text(backup.fileName)
+                                                    .font(.system(size: 12, weight: .medium))
+                                                    .foregroundColor(.plexTextPrimary)
+                                                    .lineLimit(1)
+
+                                                Text("\(viewModel.formattedBackupDate(backup.modifiedAt))  •  \(viewModel.formattedBackupSize(backup.sizeBytes))")
+                                                    .font(.system(size: 11))
+                                                    .foregroundColor(.plexTextSecondary)
+                                                    .lineLimit(1)
+                                            }
+
+                                            Spacer()
+
+                                            Button {
+                                                pendingRestoreBackup = backup
+                                            } label: {
+                                                Text(restoringBackupPath == backup.path ? "Restoring..." : "Restore")
+                                                    .font(.system(size: 11, weight: .semibold))
+                                                    .foregroundColor(.black)
+                                                    .padding(.horizontal, 12)
+                                                    .padding(.vertical, 6)
+                                                    .background(Color.plexOrange)
+                                                    .cornerRadius(6)
+                                            }
+                                            .buttonStyle(PlainButtonStyle())
+                                            .disabled(restoringBackupPath != nil)
+                                        }
+                                        .padding(10)
+                                        .background(Color.plexLightGray.opacity(0.28))
+                                        .cornerRadius(8)
+                                    }
+                                }
+                                .padding(.vertical, 2)
+                            }
+                            .frame(maxHeight: 240)
+                        }
+
+                        Text("Restore replaces your active Plex DB file. A pre-restore safety snapshot is created automatically.")
+                            .font(.system(size: 11))
+                            .foregroundColor(.plexTextSecondary)
+                    }
+                    .padding()
+                }
                 
                 SectionCard(title: "About", icon: "info.circle") {
                     VStack(alignment: .leading, spacing: 8) {
@@ -1560,6 +1685,24 @@ struct SettingsView_New: View {
                 }
             }
             .padding(20)
+        }
+        .onAppear {
+            viewModel.refreshBackupFiles()
+        }
+        .alert(item: $pendingRestoreBackup) { backup in
+            Alert(
+                title: Text("Restore Backup?"),
+                message: Text("This will replace your active Plex database with \(backup.fileName). A pre-restore safety snapshot will be created automatically."),
+                primaryButton: .destructive(Text("Restore")) {
+                    restoringBackupPath = backup.path
+                    viewModel.restoreBackup(from: backup.path)
+                    restoringBackupPath = nil
+                    pendingRestoreBackup = nil
+                },
+                secondaryButton: .cancel {
+                    pendingRestoreBackup = nil
+                }
+            )
         }
     }
 }
@@ -1775,6 +1918,115 @@ struct SmallUtilityButton: View {
     }
 }
 
+struct DryRunPreviewSheet: View {
+    @ObservedObject var viewModel: PlexTVEditorViewModel
+    let onClose: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("TMDB Dry Run Diff")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(.plexTextPrimary)
+
+                Spacer()
+
+                Button("Close") {
+                    onClose()
+                }
+                .buttonStyle(PlainButtonStyle())
+                .foregroundColor(.plexOrange)
+            }
+            .padding(.horizontal, 16)
+            .frame(height: 46)
+            .background(Color.plexMediumGray)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text(viewModel.dryRunSummary.isEmpty ? "No preview yet" : viewModel.dryRunSummary)
+                    .font(.system(size: 12))
+                    .foregroundColor(.plexTextSecondary)
+
+                if viewModel.isDryRunLoading {
+                    HStack(spacing: 10) {
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: .plexOrange))
+                        Text("Loading TMDB preview...")
+                            .font(.system(size: 12))
+                            .foregroundColor(.plexTextPrimary)
+                    }
+                    .padding(.vertical, 18)
+                } else if viewModel.dryRunRows.isEmpty {
+                    Text("No dry run rows available.")
+                        .font(.system(size: 12))
+                        .foregroundColor(.plexTextSecondary)
+                        .padding(.vertical, 10)
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 8) {
+                            ForEach(viewModel.dryRunRows) { row in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    HStack {
+                                        Text("#\(row.episodeId)")
+                                            .font(.system(size: 11, weight: .semibold))
+                                            .foregroundColor(.plexOrange)
+
+                                        Text("\(row.currentCode) -> \(row.mappedCode)")
+                                            .font(.system(size: 12, weight: .semibold))
+                                            .foregroundColor(.plexTextPrimary)
+
+                                        Spacer()
+                                    }
+
+                                    Text("Title: \(row.currentTitle) -> \(row.mappedTitle)")
+                                        .font(.system(size: 11))
+                                        .foregroundColor(.plexTextSecondary)
+                                        .lineLimit(2)
+
+                                    Text("Air: \(row.currentAirDate) -> \(row.mappedAirDate)")
+                                        .font(.system(size: 11))
+                                        .foregroundColor(.plexTextSecondary)
+
+                                    Text(row.note)
+                                        .font(.system(size: 11))
+                                        .foregroundColor(.plexTextPrimary)
+                                }
+                                .padding(10)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(Color.plexLightGray.opacity(0.25))
+                                .cornerRadius(8)
+                            }
+                        }
+                        .padding(.top, 4)
+                    }
+                }
+            }
+            .padding(16)
+            .background(Color.plexDarkGray)
+
+            HStack {
+                Spacer()
+                Button("Close") {
+                    onClose()
+                }
+                .buttonStyle(PlainButtonStyle())
+                .foregroundColor(.black)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(Color.plexOrange)
+                .cornerRadius(6)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(Color.plexMediumGray)
+        }
+        .frame(minWidth: 760, idealWidth: 860, minHeight: 480, idealHeight: 560)
+        .background(Color.plexDarkGray)
+        .onExitCommand {
+            onClose()
+        }
+    }
+}
+
 struct ShortcutHelpSheet: View {
     let onClose: () -> Void
 
@@ -1806,6 +2058,7 @@ struct ShortcutHelpSheet: View {
                         ShortcutRow(keys: "Cmd+Shift+A", action: "Clear episode selection")
                         ShortcutRow(keys: "Cmd+S", action: "Save manual episode edit")
                         ShortcutRow(keys: "Cmd+M", action: "Apply TV Metadata remap")
+                        ShortcutRow(keys: "Cmd+Option+D", action: "Run TMDB dry run diff")
                         ShortcutRow(keys: "Cmd+Option+T", action: "Smart Thumb Season")
                         ShortcutRow(keys: "Cmd+P", action: "View Plex Panel")
                         ShortcutRow(keys: "Cmd+Option+R", action: "Auto Select range (Episodes tab)")
@@ -1815,6 +2068,7 @@ struct ShortcutHelpSheet: View {
                         ShortcutRow(keys: "Cmd+Shift+S", action: "Save settings")
                         ShortcutRow(keys: "Cmd+Option+K", action: "Test connection")
                         ShortcutRow(keys: "Cmd+Option+R", action: "Reload library (Settings tab)")
+                        ShortcutRow(keys: "Cmd+Option+B", action: "Refresh backup list")
                         ShortcutRow(keys: "Cmd+Option+E", action: "Export change log CSV")
                         ShortcutRow(keys: "Cmd+Option+J", action: "Export change log JSON")
                     }

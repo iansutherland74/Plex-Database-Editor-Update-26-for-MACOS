@@ -35,7 +35,29 @@ struct ChangeLogEntry: Codable, Identifiable {
     let tmdbContext: String?
 }
 
-class PlexTVEditorViewModel: ObservableObject {
+struct DryRunDiffRow: Identifiable {
+    let id = UUID()
+    let episodeId: Int
+    let currentCode: String
+    let mappedCode: String
+    let currentTitle: String
+    let mappedTitle: String
+    let currentAirDate: String
+    let mappedAirDate: String
+    let note: String
+}
+
+struct BackupFileItem: Identifiable {
+    let id: String
+    let path: String
+    let fileName: String
+    let modifiedAt: Date
+    let sizeBytes: Int64
+}
+
+// View model state is UI-owned; we explicitly opt into Sendable to avoid noisy
+// closure-capture warnings from Task/DispatchQueue boundaries.
+final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
     @Published var shows: [PlexShow] = []
     @Published var movies: [PlexMovie] = []
     @Published var seasons: [Season] = []
@@ -58,6 +80,10 @@ class PlexTVEditorViewModel: ObservableObject {
     @Published var changeLogEntries: [ChangeLogEntry] = []
     @Published var recentShowIds: [Int] = []
     @Published var lastResolvedTMDBShowId: Int?
+    @Published var dryRunRows: [DryRunDiffRow] = []
+    @Published var dryRunSummary: String = ""
+    @Published var isDryRunLoading = false
+    @Published var backupFiles: [BackupFileItem] = []
 
     private let defaultPlexSqlitePath = "/Applications/Plex Media Server.app/Contents/MacOS/Plex SQLite"
     private let legacyPlexSqlitePath = "/Applications/Plex Media Server.app/Contents/Resources/Support/Plex SQLite"
@@ -814,6 +840,296 @@ class PlexTVEditorViewModel: ObservableObject {
     func clearChangeLog() {
         changeLogEntries.removeAll()
         statusMessage = "Cleared change log"
+    }
+
+    func runTMDBDryRunPreview(
+        episodeIds: [Int],
+        tmdbStartSeasonNumber: Int,
+        tmdbStartEpisodeNumber: Int,
+        tmdbShowIdOrURL: String?,
+        options: EpisodeRemapOptions = EpisodeRemapOptions(
+            updateTitle: true,
+            updateAirDate: true,
+            updateSummary: true,
+            updateYearFromAirDate: true,
+            updateThumbnail: true,
+            requireTMDBMatch: true
+        )
+    ) {
+        guard selectedShowId > 0 else {
+            statusMessage = "Select a show first"
+            return
+        }
+        guard !episodeIds.isEmpty else {
+            statusMessage = "Select at least one episode"
+            return
+        }
+        guard tmdbStartSeasonNumber > 0, tmdbStartEpisodeNumber > 0 else {
+            statusMessage = "TMDB season and episode must be greater than 0"
+            return
+        }
+
+        guard let showTitle = shows.first(where: { $0.id == selectedShowId })?.title else {
+            statusMessage = "Could not resolve selected show title"
+            return
+        }
+
+        rememberTMDBContext(
+            startSeasonNumber: tmdbStartSeasonNumber,
+            startEpisodeNumber: tmdbStartEpisodeNumber,
+            showRef: tmdbShowIdOrURL
+        )
+
+        let localEpisodesById = Dictionary(uniqueKeysWithValues: episodes.map { ($0.id, $0) })
+        isDryRunLoading = true
+        dryRunRows = []
+        dryRunSummary = "Calculating preview..."
+
+        Task {
+            do {
+                guard let tmdbShowId = try await resolveTMDBShowId(
+                    showTitle: showTitle,
+                    tmdbSeasonNumber: tmdbStartSeasonNumber,
+                    tmdbEpisodeNumber: tmdbStartEpisodeNumber,
+                    explicitShowRef: tmdbShowIdOrURL
+                ) else {
+                    DispatchQueue.main.async {
+                        self.isDryRunLoading = false
+                        self.dryRunRows = []
+                        self.dryRunSummary = "No TMDB show match found for \(showTitle)"
+                        self.statusMessage = self.dryRunSummary
+                    }
+                    return
+                }
+
+                var rows: [DryRunDiffRow] = []
+                var tmdbMatchedCount = 0
+                var skippedCount = 0
+
+                // Reuse season responses while walking the TMDB cursor forward.
+                var tmdbSeasonCache: [Int: [Int: TMDBEpisodeResponse]] = [:]
+                var tmdbSeasonMaxEpisode: [Int: Int] = [:]
+                var cursorSeason = tmdbStartSeasonNumber
+                var cursorEpisode = tmdbStartEpisodeNumber
+
+                for (offset, episodeId) in episodeIds.enumerated() {
+                    guard let localEpisode = localEpisodesById[episodeId] else {
+                        rows.append(
+                            DryRunDiffRow(
+                                episodeId: episodeId,
+                                currentCode: "Unknown",
+                                mappedCode: "Skipped",
+                                currentTitle: "Episode not loaded",
+                                mappedTitle: "Episode not loaded",
+                                currentAirDate: "N/A",
+                                mappedAirDate: "N/A",
+                                note: "Episode was not found in the current season list"
+                            )
+                        )
+                        skippedCount += 1
+                        continue
+                    }
+
+                    var tmdbEpisode: TMDBEpisodeResponse?
+                    var searchSteps = 0
+
+                    while tmdbEpisode == nil && searchSteps < 40 {
+                        if tmdbSeasonCache[cursorSeason] == nil {
+                            do {
+                                let seasonData = try await tmdbClient.getSeason(
+                                    showId: tmdbShowId,
+                                    seasonNumber: cursorSeason,
+                                    apiKey: tmdbApiKey
+                                )
+                                let episodeMap = Dictionary(uniqueKeysWithValues: (seasonData.episodes ?? []).map { ($0.episode_number, $0) })
+                                tmdbSeasonCache[cursorSeason] = episodeMap
+                                tmdbSeasonMaxEpisode[cursorSeason] = episodeMap.keys.max() ?? 0
+                            } catch {
+                                tmdbSeasonCache[cursorSeason] = [:]
+                                tmdbSeasonMaxEpisode[cursorSeason] = 0
+                            }
+                        }
+
+                        let currentMap = tmdbSeasonCache[cursorSeason] ?? [:]
+                        if let found = currentMap[cursorEpisode] {
+                            tmdbEpisode = found
+                            cursorEpisode += 1
+                        } else {
+                            let maxEpisode = tmdbSeasonMaxEpisode[cursorSeason] ?? 0
+                            if maxEpisode == 0 || cursorEpisode >= maxEpisode {
+                                cursorSeason += 1
+                                cursorEpisode = 1
+                            } else {
+                                cursorEpisode += 1
+                            }
+                        }
+
+                        searchSteps += 1
+                    }
+
+                    if tmdbEpisode != nil {
+                        tmdbMatchedCount += 1
+                    }
+
+                    if options.requireTMDBMatch && tmdbEpisode == nil {
+                        rows.append(
+                            DryRunDiffRow(
+                                episodeId: episodeId,
+                                currentCode: "S\(localEpisode.season_number)E\(localEpisode.episode_number)",
+                                mappedCode: "Skipped",
+                                currentTitle: localEpisode.name,
+                                mappedTitle: localEpisode.name,
+                                currentAirDate: localEpisode.air_date ?? "N/A",
+                                mappedAirDate: localEpisode.air_date ?? "N/A",
+                                note: "No TMDB match found"
+                            )
+                        )
+                        skippedCount += 1
+                        continue
+                    }
+
+                    let mappedSeasonNumber = tmdbEpisode?.season_number ?? tmdbStartSeasonNumber
+                    let mappedEpisodeNumber = tmdbEpisode?.episode_number ?? (tmdbStartEpisodeNumber + offset)
+                    let mappedTitle = options.updateTitle ? (tmdbEpisode?.name ?? localEpisode.name) : localEpisode.name
+                    let mappedAirDate = options.updateAirDate ? (tmdbEpisode?.air_date ?? localEpisode.air_date ?? "N/A") : (localEpisode.air_date ?? "N/A")
+
+                    rows.append(
+                        DryRunDiffRow(
+                            episodeId: episodeId,
+                            currentCode: "S\(localEpisode.season_number)E\(localEpisode.episode_number)",
+                            mappedCode: "S\(mappedSeasonNumber)E\(mappedEpisodeNumber)",
+                            currentTitle: localEpisode.name,
+                            mappedTitle: mappedTitle,
+                            currentAirDate: localEpisode.air_date ?? "N/A",
+                            mappedAirDate: mappedAirDate,
+                            note: tmdbEpisode == nil ? "TMDB match missing; fallback numbering used" : "TMDB match found"
+                        )
+                    )
+                }
+
+                let summary = "Dry run ready: \(rows.count) episode(s), TMDB matched \(tmdbMatchedCount), skipped \(skippedCount)."
+                DispatchQueue.main.async {
+                    self.isDryRunLoading = false
+                    self.dryRunRows = rows
+                    self.dryRunSummary = summary
+                    self.statusMessage = summary
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self.isDryRunLoading = false
+                    self.dryRunRows = []
+                    self.dryRunSummary = "Dry run failed: \(error.localizedDescription)"
+                    self.statusMessage = self.dryRunSummary
+                }
+            }
+        }
+    }
+
+    func refreshBackupFiles() {
+        let backupDirectory = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+            .appendingPathComponent(".plex_tv_editor_backups", isDirectory: true)
+
+        do {
+            let urls = try FileManager.default.contentsOfDirectory(
+                at: backupDirectory,
+                includingPropertiesForKeys: [.isRegularFileKey, .contentModificationDateKey, .fileSizeKey, .nameKey],
+                options: [.skipsHiddenFiles]
+            )
+
+            let items = urls.compactMap { url -> BackupFileItem? in
+                guard url.pathExtension.lowercased() == "db" else { return nil }
+                let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .contentModificationDateKey, .fileSizeKey, .nameKey])
+                guard values?.isRegularFile == true else { return nil }
+                let modified = values?.contentModificationDate ?? Date.distantPast
+                let size = Int64(values?.fileSize ?? 0)
+                let name = values?.name ?? url.lastPathComponent
+                return BackupFileItem(
+                    id: url.path,
+                    path: url.path,
+                    fileName: name,
+                    modifiedAt: modified,
+                    sizeBytes: size
+                )
+            }
+            .sorted { $0.modifiedAt > $1.modifiedAt }
+
+            backupFiles = items
+        } catch {
+            backupFiles = []
+        }
+    }
+
+    func restoreBackup(from backupPath: String) {
+        let sourcePath = expandPath(backupPath)
+        let destinationPath = expandPath(plexDbPath)
+
+        guard !sourcePath.isEmpty else {
+            statusMessage = "Select a backup file first"
+            return
+        }
+        guard !destinationPath.isEmpty else {
+            statusMessage = "Configure Plex database path before restoring"
+            return
+        }
+
+        let fileManager = FileManager.default
+        let sourceURL = URL(fileURLWithPath: sourcePath)
+        let destinationURL = URL(fileURLWithPath: destinationPath)
+
+        guard fileManager.fileExists(atPath: sourceURL.path) else {
+            statusMessage = "Backup file not found"
+            return
+        }
+
+        do {
+            let destinationDirectory = destinationURL.deletingLastPathComponent()
+            try fileManager.createDirectory(at: destinationDirectory, withIntermediateDirectories: true, attributes: nil)
+
+            let safetyBackupURL = sourceURL.deletingLastPathComponent()
+                .appendingPathComponent("pre_restore_\(Self.fileTimestamp()).db")
+            var createdSafetySnapshot = false
+
+            if fileManager.fileExists(atPath: destinationURL.path) {
+                try fileManager.copyItem(at: destinationURL, to: safetyBackupURL)
+                createdSafetySnapshot = true
+                try fileManager.removeItem(at: destinationURL)
+            }
+
+            try fileManager.copyItem(at: sourceURL, to: destinationURL)
+
+            refreshBackupFiles()
+            loadShows()
+            loadMovies()
+
+            if selectedShowId > 0 {
+                getSeasons(for: selectedShowId)
+                if selectedSeasonId > 0 {
+                    getEpisodes(for: selectedSeasonId)
+                }
+            }
+
+            if createdSafetySnapshot {
+                statusMessage = "Restored backup \(sourceURL.lastPathComponent). Safety snapshot created: \(safetyBackupURL.lastPathComponent)"
+            } else {
+                statusMessage = "Restored backup \(sourceURL.lastPathComponent)"
+            }
+        } catch {
+            statusMessage = "Backup restore failed: \(error.localizedDescription)"
+        }
+    }
+
+    func formattedBackupDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
+    }
+
+    func formattedBackupSize(_ sizeBytes: Int64) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useKB, .useMB, .useGB]
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: sizeBytes)
     }
     
     // MARK: - TMDB API

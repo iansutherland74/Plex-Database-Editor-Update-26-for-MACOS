@@ -41,21 +41,42 @@ cp Info.plist "$BUNDLE/Contents/Info.plist"
 
 # Compile Swift code
 echo "Compiling Swift sources..."
-swiftc \
-    -parse-as-library \
-    -target arm64-apple-macosx11.0 \
-    -sdk /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk \
-    -F /Applications/Xcode.app/Contents/Developer/Frameworks \
-    -framework SwiftUI \
-    -framework Foundation \
-    -framework Cocoa \
-    -O \
-    PlexTVEditorApp.swift \
-    ContentView.swift \
-    PlexTVEditorViewModel.swift \
-    PlexDatabaseManager.swift \
-    TMDBClient.swift \
-    -o "$BUNDLE/Contents/MacOS/$APP_NAME" 2>&1 || {
+SDK_PATH="$(xcrun --sdk macosx --show-sdk-path 2>/dev/null || true)"
+if [ -z "$SDK_PATH" ] || [ ! -d "$SDK_PATH" ]; then
+    SDK_PATH="$(xcode-select -p 2>/dev/null || true)/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
+fi
+
+if [ -z "$SDK_PATH" ] || [ ! -d "$SDK_PATH" ]; then
+    echo "✗ Could not locate macOS SDK"
+    echo "Make sure Xcode or Command Line Tools are installed:"
+    echo "  xcode-select --install"
+    exit 1
+fi
+
+DEVELOPER_DIR="$(xcode-select -p 2>/dev/null || true)"
+FRAMEWORK_SEARCH_PATH="$DEVELOPER_DIR/../Frameworks"
+
+SWIFTC_ARGS=(
+    -parse-as-library
+    -target arm64-apple-macosx11.0
+    -sdk "$SDK_PATH"
+    -framework SwiftUI
+    -framework Foundation
+    -framework Cocoa
+    -O
+    PlexTVEditorApp.swift
+    ContentView.swift
+    PlexTVEditorViewModel.swift
+    PlexDatabaseManager.swift
+    TMDBClient.swift
+    -o "$BUNDLE/Contents/MacOS/$APP_NAME"
+)
+
+if [ -d "$FRAMEWORK_SEARCH_PATH" ]; then
+    SWIFTC_ARGS+=( -F "$FRAMEWORK_SEARCH_PATH" )
+fi
+
+swiftc "${SWIFTC_ARGS[@]}" 2>&1 || {
     echo "✗ Compilation failed"
     echo "Make sure Xcode Command Line Tools are installed:"
     echo "  xcode-select --install"
