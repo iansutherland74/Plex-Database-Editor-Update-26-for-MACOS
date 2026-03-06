@@ -25,3 +25,7 @@ Plex TV Editor.app/
 *.log
 *.tmp
 *.bak
+
+# Generated release prep artifacts
+docs/release_prep_report_*.md
+docs/release_notes_*.md

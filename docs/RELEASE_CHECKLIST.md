@@ -58,6 +58,7 @@ cd /Users/sutherland/repo
   - release notes generation output
   - git status snapshot
   - recent commits
+- Generated default output files are ignored by git via `.gitignore` patterns.
 
 ## Notes
 - Live smoke checks require Plex token availability (`PLEX_TOKEN` or local defaults).

@@ -125,14 +125,22 @@ NOTES_OUTPUT="(release notes generation skipped)"
 
 if [ "$RUN_QUALITY_GATE" -eq 1 ]; then
     set +e
-    QUALITY_OUTPUT="$(./run_quality_gate.sh "${QUALITY_GATE_ARGS[@]}" 2>&1)"
+    if [ "${#QUALITY_GATE_ARGS[@]}" -gt 0 ]; then
+        QUALITY_OUTPUT="$(./run_quality_gate.sh "${QUALITY_GATE_ARGS[@]}" 2>&1)"
+    else
+        QUALITY_OUTPUT="$(./run_quality_gate.sh 2>&1)"
+    fi
     QUALITY_EXIT=$?
     set -e
 fi
 
 if [ "$RUN_RELEASE_NOTES" -eq 1 ]; then
     set +e
-    NOTES_OUTPUT="$(./generate_release_notes.sh "${RELEASE_NOTES_ARGS[@]}" 2>&1)"
+    if [ "${#RELEASE_NOTES_ARGS[@]}" -gt 0 ]; then
+        NOTES_OUTPUT="$(./generate_release_notes.sh "${RELEASE_NOTES_ARGS[@]}" 2>&1)"
+    else
+        NOTES_OUTPUT="$(./generate_release_notes.sh 2>&1)"
+    fi
     NOTES_EXIT=$?
     set -e
 
