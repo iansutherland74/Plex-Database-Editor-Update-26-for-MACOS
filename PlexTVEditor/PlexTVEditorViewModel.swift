@@ -12,6 +12,29 @@ struct EpisodeRemapOptions {
     let requireTMDBMatch: Bool
 }
 
+enum ChangeLogExportFormat {
+    case csv
+    case json
+
+    var fileExtension: String {
+        switch self {
+        case .csv: return "csv"
+        case .json: return "json"
+        }
+    }
+}
+
+struct ChangeLogEntry: Codable, Identifiable {
+    let id: UUID
+    let timestampISO8601: String
+    let message: String
+    let showId: Int?
+    let showTitle: String?
+    let seasonId: Int?
+    let tmdbShowId: Int?
+    let tmdbContext: String?
+}
+
 class PlexTVEditorViewModel: ObservableObject {
     @Published var shows: [PlexShow] = []
     @Published var movies: [PlexMovie] = []
@@ -27,7 +50,14 @@ class PlexTVEditorViewModel: ObservableObject {
     @Published var tmdbApiKey: String = ""
     @Published var plexSqlitePath: String = ""
     @Published var plexDbPath: String = ""
-    @Published var statusMessage: String = ""
+    @Published var statusMessage: String = "" {
+        didSet {
+            logBatchStatusIfNeeded(statusMessage)
+        }
+    }
+    @Published var changeLogEntries: [ChangeLogEntry] = []
+    @Published var recentShowIds: [Int] = []
+    @Published var lastResolvedTMDBShowId: Int?
 
     private let defaultPlexSqlitePath = "/Applications/Plex Media Server.app/Contents/MacOS/Plex SQLite"
     private let legacyPlexSqlitePath = "/Applications/Plex Media Server.app/Contents/Resources/Support/Plex SQLite"
@@ -38,6 +68,8 @@ class PlexTVEditorViewModel: ObservableObject {
     private var lastTMDBStartSeasonNumber: Int?
     private var lastTMDBStartEpisodeNumber: Int?
     private var lastTMDBShowRef: String?
+
+    private static let changeLogDateFormatter = ISO8601DateFormatter()
 
     private var defaultPlexDbPath: String {
         return "\(NSHomeDirectory())/Library/Application Support/Plex Media Server/Plug-in Support/Databases/com.plexapp.plugins.library.db"
@@ -67,6 +99,7 @@ class PlexTVEditorViewModel: ObservableObject {
     func selectShow(_ show: PlexShow) {
         selectedShowId = show.id
         selectedSeasonId = 0
+        rememberRecentShow(show.id)
 
         let manager = PlexDatabaseManager(dbPath: expandPath(plexDbPath), plexSqlitePath: expandPath(plexSqlitePath))
         let fetchedSeasons = manager.getSeasons(for: show.id)
@@ -741,6 +774,47 @@ class PlexTVEditorViewModel: ObservableObject {
         }
         return (season, episode, lastTMDBShowRef)
     }
+
+    func recentShows(limit: Int = 6) -> [PlexShow] {
+        let byId = Dictionary(uniqueKeysWithValues: shows.map { ($0.id, $0) })
+        return Array(recentShowIds.compactMap { byId[$0] }.prefix(limit))
+    }
+
+    func exportChangeLog(format: ChangeLogExportFormat) {
+        guard !changeLogEntries.isEmpty else {
+            statusMessage = "No change log entries to export"
+            return
+        }
+
+        let panel = NSSavePanel()
+        panel.canCreateDirectories = true
+        panel.allowedFileTypes = [format.fileExtension]
+        panel.nameFieldStringValue = "plex_change_log_\(Self.fileTimestamp()).\(format.fileExtension)"
+        panel.title = "Export Change Log"
+        panel.message = "Save change log as \(format.fileExtension.uppercased())"
+
+        guard panel.runModal() == .OK, let url = panel.url else {
+            statusMessage = "Change log export cancelled"
+            return
+        }
+
+        do {
+            switch format {
+            case .csv:
+                try csvDataForChangeLog().write(to: url, options: .atomic)
+            case .json:
+                try jsonDataForChangeLog().write(to: url, options: .atomic)
+            }
+            statusMessage = "Exported \(changeLogEntries.count) change log entries"
+        } catch {
+            statusMessage = "Failed to export change log: \(error.localizedDescription)"
+        }
+    }
+
+    func clearChangeLog() {
+        changeLogEntries.removeAll()
+        statusMessage = "Cleared change log"
+    }
     
     // MARK: - TMDB API
 
@@ -752,6 +826,9 @@ class PlexTVEditorViewModel: ObservableObject {
     ) async throws -> Int? {
         // Prefer explicit user input first (raw ID or tmdb.org URL).
         if let parsedShowId = Self.parseTMDBShowId(explicitShowRef) {
+            DispatchQueue.main.async {
+                self.lastResolvedTMDBShowId = parsedShowId
+            }
             return parsedShowId
         }
 
@@ -779,6 +856,9 @@ class PlexTVEditorViewModel: ObservableObject {
                 )
                 let hasEpisode = (seasonData.episodes ?? []).contains { $0.episode_number == tmdbEpisodeNumber }
                 if hasEpisode {
+                    DispatchQueue.main.async {
+                        self.lastResolvedTMDBShowId = candidate.id
+                    }
                     return candidate.id
                 }
             } catch {
@@ -786,7 +866,11 @@ class PlexTVEditorViewModel: ObservableObject {
             }
         }
 
-        return ranked.first?.id
+        let fallback = ranked.first?.id
+        DispatchQueue.main.async {
+            self.lastResolvedTMDBShowId = fallback
+        }
+        return fallback
     }
     
     func searchTMDB(query: String) {
@@ -934,6 +1018,98 @@ class PlexTVEditorViewModel: ObservableObject {
         }
 
         return expandPath(trimmedPath)
+    }
+
+    private func rememberRecentShow(_ showId: Int) {
+        recentShowIds.removeAll(where: { $0 == showId })
+        recentShowIds.insert(showId, at: 0)
+        if recentShowIds.count > 12 {
+            recentShowIds = Array(recentShowIds.prefix(12))
+        }
+    }
+
+    private func logBatchStatusIfNeeded(_ message: String) {
+        let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        let lower = trimmed.lowercased()
+        let markers = [
+            "updated",
+            "remap",
+            "remapped",
+            "failed",
+            "synced",
+            "applied",
+            "created plex season",
+            "backup created"
+        ]
+
+        guard markers.contains(where: { lower.contains($0) }) else { return }
+
+        let tmdbContextString: String?
+        if let context = lastTMDBContext() {
+            tmdbContextString = "S\(context.season)E\(context.episode)"
+        } else {
+            tmdbContextString = nil
+        }
+
+        let entry = ChangeLogEntry(
+            id: UUID(),
+            timestampISO8601: Self.changeLogDateFormatter.string(from: Date()),
+            message: trimmed,
+            showId: selectedShowId > 0 ? selectedShowId : nil,
+            showTitle: shows.first(where: { $0.id == selectedShowId })?.title,
+            seasonId: selectedSeasonId > 0 ? selectedSeasonId : nil,
+            tmdbShowId: lastResolvedTMDBShowId,
+            tmdbContext: tmdbContextString
+        )
+
+        changeLogEntries.insert(entry, at: 0)
+        if changeLogEntries.count > 1000 {
+            changeLogEntries = Array(changeLogEntries.prefix(1000))
+        }
+    }
+
+    private func csvDataForChangeLog() throws -> Data {
+        var rows: [String] = []
+        rows.append("timestamp,message,show_id,show_title,season_id,tmdb_show_id,tmdb_context")
+
+        for entry in changeLogEntries {
+            let fields: [String] = [
+                entry.timestampISO8601,
+                entry.message,
+                entry.showId.map(String.init) ?? "",
+                entry.showTitle ?? "",
+                entry.seasonId.map(String.init) ?? "",
+                entry.tmdbShowId.map(String.init) ?? "",
+                entry.tmdbContext ?? ""
+            ]
+            rows.append(fields.map(Self.csvEscape).joined(separator: ","))
+        }
+
+        let csv = rows.joined(separator: "\n")
+        guard let data = csv.data(using: .utf8) else {
+            throw NSError(domain: "PlexTVEditor", code: 1, userInfo: [NSLocalizedDescriptionKey: "Could not encode CSV as UTF-8"])
+        }
+        return data
+    }
+
+    private func jsonDataForChangeLog() throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return try encoder.encode(changeLogEntries)
+    }
+
+    private static func csvEscape(_ value: String) -> String {
+        let escaped = value.replacingOccurrences(of: "\"", with: "\"\"")
+        return "\"\(escaped)\""
+    }
+
+    private static func fileTimestamp() -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyyMMdd_HHmmss"
+        return formatter.string(from: Date())
     }
 
     func detect3DAndApply(forEpisodeIds episodeIds: [Int]) -> (detected: Int, updated: Int) {

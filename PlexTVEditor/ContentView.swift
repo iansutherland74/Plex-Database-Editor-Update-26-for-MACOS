@@ -193,6 +193,32 @@ struct TVShowDetailView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
+                if !viewModel.recentShows().isEmpty {
+                    SectionCard(title: "Recent Shows", icon: "clock.arrow.circlepath") {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(viewModel.recentShows(), id: \.id) { show in
+                                    Button {
+                                        viewModel.selectShow(show)
+                                        selectedTab = 0
+                                    } label: {
+                                        Text(show.title)
+                                            .font(.system(size: 12, weight: .medium))
+                                            .foregroundColor(viewModel.selectedShowId == show.id ? .black : .plexTextPrimary)
+                                            .lineLimit(1)
+                                            .padding(.horizontal, 10)
+                                            .padding(.vertical, 6)
+                                            .background(viewModel.selectedShowId == show.id ? Color.plexOrange : Color.plexLightGray.opacity(0.5))
+                                            .cornerRadius(12)
+                                    }
+                                    .buttonStyle(PlainButtonStyle())
+                                }
+                            }
+                            .padding(12)
+                        }
+                    }
+                }
+
                 if viewModel.selectedShowId > 0 {
                     // Seasons Section
                     SectionCard(title: "Seasons", icon: "list.number") {
@@ -302,6 +328,7 @@ struct EpisodesSection_New: View {
                     }
                     .buttonStyle(PlainButtonStyle())
                     .foregroundColor(.plexOrange)
+                    .keyboardShortcut("a", modifiers: [.command])
                     
                     Button(action: {
                         selectedEpisodeIds.removeAll()
@@ -311,6 +338,7 @@ struct EpisodesSection_New: View {
                     }
                     .buttonStyle(PlainButtonStyle())
                     .foregroundColor(.plexTextSecondary)
+                    .keyboardShortcut("a", modifiers: [.command, .shift])
                     
                     Spacer()
                     
@@ -367,6 +395,53 @@ struct EpisodesSection_New: View {
                             Text(editTargetEpisodeLabel)
                                 .font(.system(size: 11))
                                 .foregroundColor(.plexTextSecondary)
+                        }
+
+                        if let context = viewModel.lastTMDBContext() {
+                            HStack(spacing: 8) {
+                                Button {
+                                    applyLastTMDBContext(context)
+                                } label: {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "arrow.counterclockwise")
+                                            .font(.system(size: 10, weight: .semibold))
+                                        Text("Use Last TMDB S\(context.season)E\(context.episode)")
+                                            .font(.system(size: 11, weight: .semibold))
+                                    }
+                                    .foregroundColor(.plexTextPrimary)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                                    .background(Color.plexLightGray.opacity(0.45))
+                                    .cornerRadius(10)
+                                }
+                                .buttonStyle(PlainButtonStyle())
+
+                                if let activeTMDBShowId {
+                                    SmallUtilityButton(title: "Copy TMDB ID", icon: "doc.on.doc") {
+                                        copyValueToClipboard(String(activeTMDBShowId), label: "TMDB show ID")
+                                    }
+                                }
+
+                                if let episode = editTargetEpisode {
+                                    SmallUtilityButton(title: "Copy Plex ID", icon: "number") {
+                                        copyValueToClipboard(String(episode.id), label: "Plex episode ID")
+                                    }
+                                }
+
+                                Spacer()
+                            }
+                        } else if let episode = editTargetEpisode {
+                            HStack {
+                                SmallUtilityButton(title: "Copy Plex ID", icon: "number") {
+                                    copyValueToClipboard(String(episode.id), label: "Plex episode ID")
+                                }
+                                if let activeTMDBShowId {
+                                    SmallUtilityButton(title: "Copy TMDB ID", icon: "doc.on.doc") {
+                                        copyValueToClipboard(String(activeTMDBShowId), label: "TMDB show ID")
+                                    }
+                                }
+                                Spacer()
+                            }
                         }
 
                         HStack(spacing: 10) {
@@ -437,6 +512,7 @@ struct EpisodesSection_New: View {
                             ) {
                                 autoSelectEpisodeRange()
                             }
+                            .keyboardShortcut("r", modifiers: [.command, .option])
 
                             Spacer()
                         }
@@ -458,6 +534,7 @@ struct EpisodesSection_New: View {
                                 )
                                 selectedEpisodeIds.removeAll()
                             }
+                            .keyboardShortcut("s", modifiers: [.command])
 
                             ActionButton(
                                 title: "TV Metadata",
@@ -505,6 +582,7 @@ struct EpisodesSection_New: View {
                                 manualTMDBEpisodeNumber = String(parsedTMDBEpisode)
                                 selectedEpisodeIds.removeAll()
                             }
+                            .keyboardShortcut("m", modifiers: [.command])
 
                             ActionButton(
                                 title: "Smart Thumb Season",
@@ -517,6 +595,7 @@ struct EpisodesSection_New: View {
                                 viewModel.smartRemapCurrentSeasonThumbnailsFromTMDB(tmdbShowIdOrURL: resolvedShowRef)
                                 selectedEpisodeIds.removeAll()
                             }
+                            .keyboardShortcut("t", modifiers: [.command, .option])
 
                             Button {
                                 previewEpisodeId = editTargetEpisode?.id ?? viewModel.episodes.sorted { $0.episode_number < $1.episode_number }.first?.id
@@ -536,6 +615,7 @@ struct EpisodesSection_New: View {
                             }
                             .buttonStyle(PlainButtonStyle())
                             .disabled(viewModel.episodes.isEmpty)
+                            .keyboardShortcut("p", modifiers: [.command])
 
                             Spacer()
                         }
@@ -664,6 +744,36 @@ struct EpisodesSection_New: View {
         selectedEpisodeIds = Set(selectedSlice.map { $0.id })
 
         viewModel.statusMessage = "Selected \(selectedSlice.count) episode(s) from S\(anchor.season_number)E\(anchor.episode_number)"
+    }
+
+    private var activeTMDBShowId: Int? {
+        if let explicit = PlexTVEditorViewModel.parseTMDBShowId(manualTMDBShowRef) {
+            return explicit
+        }
+        if let resolved = viewModel.lastResolvedTMDBShowId {
+            return resolved
+        }
+        if let context = viewModel.lastTMDBContext() {
+            return PlexTVEditorViewModel.parseTMDBShowId(context.showRef)
+        }
+        return nil
+    }
+
+    private func applyLastTMDBContext(_ context: (season: Int, episode: Int, showRef: String?)) {
+        manualTMDBSeasonNumber = String(context.season)
+        manualTMDBEpisodeNumber = String(context.episode)
+        if let showRef = context.showRef, !showRef.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            manualTMDBShowRef = showRef
+        }
+        manualTMDBCode = "S\(context.season)E\(context.episode)"
+        viewModel.statusMessage = "Loaded last TMDB context into manual fields"
+    }
+
+    private func copyValueToClipboard(_ value: String, label: String) {
+        let board = NSPasteboard.general
+        board.clearContents()
+        board.setString(value, forType: .string)
+        viewModel.statusMessage = "Copied \(label): \(value)"
     }
 }
 
@@ -1275,14 +1385,53 @@ struct SettingsView_New: View {
                             ActionButton(title: "Save Settings", icon: "square.and.arrow.down", disabled: false) {
                                 viewModel.saveSettings()
                             }
+                            .keyboardShortcut("s", modifiers: [.command, .shift])
                             
                             ActionButton(title: "Test Connection", icon: "link", disabled: false) {
                                 viewModel.testConnection()
                             }
+                            .keyboardShortcut("k", modifiers: [.command, .option])
                             
                             ActionButton(title: "Reload Library", icon: "arrow.clockwise", disabled: false) {
                                 viewModel.loadShows()
                                 viewModel.loadMovies()
+                            }
+                            .keyboardShortcut("r", modifiers: [.command, .option])
+                        }
+                    }
+                    .padding()
+                }
+
+                SectionCard(title: "Change Log", icon: "doc.plaintext") {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Automatic batch log entries: \(viewModel.changeLogEntries.count)")
+                            .font(.system(size: 12))
+                            .foregroundColor(.plexTextSecondary)
+
+                        if let latest = viewModel.changeLogEntries.first {
+                            Text("Latest: \(latest.message)")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(.plexTextPrimary)
+                                .lineLimit(2)
+                        } else {
+                            Text("No logged batch operations yet")
+                                .font(.system(size: 12))
+                                .foregroundColor(.plexTextSecondary)
+                        }
+
+                        HStack(spacing: 12) {
+                            ActionButton(title: "Export CSV", icon: "tablecells", disabled: viewModel.changeLogEntries.isEmpty) {
+                                viewModel.exportChangeLog(format: .csv)
+                            }
+                            .keyboardShortcut("e", modifiers: [.command, .option])
+
+                            ActionButton(title: "Export JSON", icon: "curlybraces", disabled: viewModel.changeLogEntries.isEmpty) {
+                                viewModel.exportChangeLog(format: .json)
+                            }
+                            .keyboardShortcut("j", modifiers: [.command, .option])
+
+                            ActionButton(title: "Clear Log", icon: "trash", disabled: viewModel.changeLogEntries.isEmpty) {
+                                viewModel.clearChangeLog()
                             }
                         }
                     }
@@ -1433,6 +1582,29 @@ struct ActionButton: View {
         }
         .buttonStyle(PlainButtonStyle())
         .disabled(disabled)
+    }
+}
+
+struct SmallUtilityButton: View {
+    let title: String
+    let icon: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: icon)
+                    .font(.system(size: 10, weight: .semibold))
+                Text(title)
+                    .font(.system(size: 11, weight: .medium))
+            }
+            .foregroundColor(.plexTextPrimary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(Color.plexLightGray.opacity(0.5))
+            .cornerRadius(8)
+        }
+        .buttonStyle(PlainButtonStyle())
     }
 }
 
