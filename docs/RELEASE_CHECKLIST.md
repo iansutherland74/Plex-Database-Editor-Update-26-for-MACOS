@@ -43,6 +43,13 @@ cd /Users/sutherland/repo
 ./run_stage6_tests.sh
 ```
 
+Run Stage 7 CI/release workflow contract tests directly:
+
+```bash
+cd /Users/sutherland/repo
+./run_stage7_tests.sh
+```
+
 Run full release prep (includes build):
 
 ```bash

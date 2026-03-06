@@ -11,6 +11,7 @@ RUN_STAGE3=1
 RUN_STAGE4=1
 RUN_STAGE5=1
 RUN_STAGE6=1
+RUN_STAGE7=1
 RUN_SHELL_LINT=1
 RUN_SMOKE_HELP=1
 RUN_LIVE_SMOKE=0
@@ -46,6 +47,10 @@ while [ $# -gt 0 ]; do
             RUN_STAGE6=0
             shift
             ;;
+        --skip-stage7)
+            RUN_STAGE7=0
+            shift
+            ;;
         --skip-shell-lint)
             RUN_SHELL_LINT=0
             shift
@@ -71,6 +76,11 @@ Default behavior:
   - Build app (`./build_swift_app.sh`)
   - Run dry-run tests (`./run_dry_run_tests.sh`)
   - Run Stage 2 reliability tests (`./run_stage2_tests.sh`)
+    - Run Stage 3 workflow tests (`./run_stage3_tests.sh`)
+    - Run Stage 4 release-tag tests (`./run_stage4_tests.sh`)
+    - Run Stage 5 tooling contract tests (`./run_stage5_tests.sh`)
+    - Run Stage 6 release automation regression tests (`./run_stage6_tests.sh`)
+    - Run Stage 7 CI/release workflow contract tests (`./run_stage7_tests.sh`)
   - Lint shell scripts with `bash -n`
   - Validate live smoke script help output
 
@@ -82,6 +92,7 @@ Options:
     --skip-stage4        Skip Stage 4 release-tag tests
     --skip-stage5        Skip Stage 5 tooling contract tests
     --skip-stage6        Skip Stage 6 release-automation regression tests
+    --skip-stage7        Skip Stage 7 CI/release workflow contract tests
   --skip-shell-lint    Skip shell syntax checks
   --skip-smoke-help    Skip live smoke help sanity check
   --include-live-smoke Run live Plex smoke checks (read-only)
@@ -149,6 +160,10 @@ if [ "$RUN_STAGE6" -eq 1 ]; then
     run_step "Stage 6 release automation regression tests" ./run_stage6_tests.sh
 fi
 
+if [ "$RUN_STAGE7" -eq 1 ]; then
+    run_step "Stage 7 CI/release workflow contract tests" ./run_stage7_tests.sh
+fi
+
 if [ "$RUN_SHELL_LINT" -eq 1 ]; then
     run_step "Shell lint run_dry_run_tests.sh" bash -n ./run_dry_run_tests.sh
     run_step "Shell lint run_stage2_tests.sh" bash -n ./run_stage2_tests.sh
@@ -156,6 +171,7 @@ if [ "$RUN_SHELL_LINT" -eq 1 ]; then
     run_step "Shell lint run_stage4_tests.sh" bash -n ./run_stage4_tests.sh
     run_step "Shell lint run_stage5_tests.sh" bash -n ./run_stage5_tests.sh
     run_step "Shell lint run_stage6_tests.sh" bash -n ./run_stage6_tests.sh
+    run_step "Shell lint run_stage7_tests.sh" bash -n ./run_stage7_tests.sh
     run_step "Shell lint run_live_plex_smoke.sh" bash -n ./run_live_plex_smoke.sh
     run_step "Shell lint run_release_prep.sh" bash -n ./run_release_prep.sh
     run_step "Shell lint generate_release_notes.sh" bash -n ./generate_release_notes.sh
@@ -165,6 +181,7 @@ if [ "$RUN_SHELL_LINT" -eq 1 ]; then
     run_step "Shell lint tests/Stage4ReleaseTagTests.sh" bash -n ./tests/Stage4ReleaseTagTests.sh
     run_step "Shell lint tests/Stage5ToolingContractTests.sh" bash -n ./tests/Stage5ToolingContractTests.sh
     run_step "Shell lint tests/Stage6ReleaseAutomationRegressionTests.sh" bash -n ./tests/Stage6ReleaseAutomationRegressionTests.sh
+    run_step "Shell lint tests/Stage7CIWorkflowContractTests.sh" bash -n ./tests/Stage7CIWorkflowContractTests.sh
 fi
 
 if [ "$RUN_SMOKE_HELP" -eq 1 ]; then
