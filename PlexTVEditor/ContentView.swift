@@ -1650,6 +1650,11 @@ struct SettingsView_New: View {
     private var hasQueuedSectionJob: Bool {
         !viewModel.lastQueuedPlexSectionKey.isEmpty && !viewModel.lastQueuedPlexSectionAction.isEmpty
     }
+
+    private var hasFailedActionsForSelectedSections: Bool {
+        let combined = tvSectionHistory + movieSectionHistory
+        return combined.contains { $0.outcome.lowercased().contains("failed") }
+    }
     
     var body: some View {
         ScrollView {
@@ -1815,7 +1820,7 @@ struct SettingsView_New: View {
                                     ActionButton(
                                         title: "Refresh TV Section",
                                         icon: "arrow.triangle.2.circlepath",
-                                        disabled: viewModel.selectedPlexTVSectionKey.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection || viewModel.isEmptyingPlexSection || viewModel.isCancellingPlexSectionJob || viewModel.isRunningPlexSectionMaintenance || viewModel.isRunningBulkPlexSectionMaintenance
+                                        disabled: viewModel.selectedPlexTVSectionKey.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection || viewModel.isEmptyingPlexSection || viewModel.isCancellingPlexSectionJob || viewModel.isRunningPlexSectionMaintenance || viewModel.isRunningBulkPlexSectionMaintenance || viewModel.isRetryingFailedPlexSectionActions
                                     ) {
                                         let label = tvSections.first(where: { $0.key == viewModel.selectedPlexTVSectionKey })?.title ?? "TV section"
                                         viewModel.refreshSelectedPlexSection(
@@ -1827,7 +1832,7 @@ struct SettingsView_New: View {
                                     ActionButton(
                                         title: "Refresh Movie Section",
                                         icon: "arrow.triangle.2.circlepath",
-                                        disabled: viewModel.selectedPlexMovieSectionKey.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection || viewModel.isEmptyingPlexSection || viewModel.isCancellingPlexSectionJob || viewModel.isRunningPlexSectionMaintenance || viewModel.isRunningBulkPlexSectionMaintenance
+                                        disabled: viewModel.selectedPlexMovieSectionKey.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection || viewModel.isEmptyingPlexSection || viewModel.isCancellingPlexSectionJob || viewModel.isRunningPlexSectionMaintenance || viewModel.isRunningBulkPlexSectionMaintenance || viewModel.isRetryingFailedPlexSectionActions
                                     ) {
                                         let label = movieSections.first(where: { $0.key == viewModel.selectedPlexMovieSectionKey })?.title ?? "Movie section"
                                         viewModel.refreshSelectedPlexSection(
@@ -1841,7 +1846,7 @@ struct SettingsView_New: View {
                                     ActionButton(
                                         title: "Analyze TV Section",
                                         icon: "waveform.path.ecg",
-                                        disabled: viewModel.selectedPlexTVSectionKey.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection || viewModel.isEmptyingPlexSection || viewModel.isCancellingPlexSectionJob || viewModel.isRunningPlexSectionMaintenance || viewModel.isRunningBulkPlexSectionMaintenance
+                                        disabled: viewModel.selectedPlexTVSectionKey.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection || viewModel.isEmptyingPlexSection || viewModel.isCancellingPlexSectionJob || viewModel.isRunningPlexSectionMaintenance || viewModel.isRunningBulkPlexSectionMaintenance || viewModel.isRetryingFailedPlexSectionActions
                                     ) {
                                         let label = tvSections.first(where: { $0.key == viewModel.selectedPlexTVSectionKey })?.title ?? "TV section"
                                         viewModel.analyzeSelectedPlexSection(
@@ -1853,7 +1858,7 @@ struct SettingsView_New: View {
                                     ActionButton(
                                         title: "Analyze Movie Section",
                                         icon: "waveform.path.ecg",
-                                        disabled: viewModel.selectedPlexMovieSectionKey.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection || viewModel.isEmptyingPlexSection || viewModel.isCancellingPlexSectionJob || viewModel.isRunningPlexSectionMaintenance || viewModel.isRunningBulkPlexSectionMaintenance
+                                        disabled: viewModel.selectedPlexMovieSectionKey.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection || viewModel.isEmptyingPlexSection || viewModel.isCancellingPlexSectionJob || viewModel.isRunningPlexSectionMaintenance || viewModel.isRunningBulkPlexSectionMaintenance || viewModel.isRetryingFailedPlexSectionActions
                                     ) {
                                         let label = movieSections.first(where: { $0.key == viewModel.selectedPlexMovieSectionKey })?.title ?? "Movie section"
                                         viewModel.analyzeSelectedPlexSection(
@@ -1867,7 +1872,7 @@ struct SettingsView_New: View {
                                     ActionButton(
                                         title: "Empty TV Trash",
                                         icon: "trash.fill",
-                                        disabled: viewModel.selectedPlexTVSectionKey.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection || viewModel.isEmptyingPlexSection || viewModel.isCancellingPlexSectionJob || viewModel.isRunningPlexSectionMaintenance || viewModel.isRunningBulkPlexSectionMaintenance
+                                        disabled: viewModel.selectedPlexTVSectionKey.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection || viewModel.isEmptyingPlexSection || viewModel.isCancellingPlexSectionJob || viewModel.isRunningPlexSectionMaintenance || viewModel.isRunningBulkPlexSectionMaintenance || viewModel.isRetryingFailedPlexSectionActions
                                     ) {
                                         let label = tvSections.first(where: { $0.key == viewModel.selectedPlexTVSectionKey })?.title ?? "TV section"
                                         pendingSectionTrashConfirmation = SectionTrashConfirmation(
@@ -1879,7 +1884,7 @@ struct SettingsView_New: View {
                                     ActionButton(
                                         title: "Empty Movie Trash",
                                         icon: "trash.fill",
-                                        disabled: viewModel.selectedPlexMovieSectionKey.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection || viewModel.isEmptyingPlexSection || viewModel.isCancellingPlexSectionJob || viewModel.isRunningPlexSectionMaintenance || viewModel.isRunningBulkPlexSectionMaintenance
+                                        disabled: viewModel.selectedPlexMovieSectionKey.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection || viewModel.isEmptyingPlexSection || viewModel.isCancellingPlexSectionJob || viewModel.isRunningPlexSectionMaintenance || viewModel.isRunningBulkPlexSectionMaintenance || viewModel.isRetryingFailedPlexSectionActions
                                     ) {
                                         let label = movieSections.first(where: { $0.key == viewModel.selectedPlexMovieSectionKey })?.title ?? "Movie section"
                                         pendingSectionTrashConfirmation = SectionTrashConfirmation(
@@ -1893,7 +1898,7 @@ struct SettingsView_New: View {
                                     ActionButton(
                                         title: "Run TV Maintenance",
                                         icon: "wrench.and.screwdriver",
-                                        disabled: viewModel.selectedPlexTVSectionKey.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection || viewModel.isEmptyingPlexSection || viewModel.isCancellingPlexSectionJob || viewModel.isRunningPlexSectionMaintenance || viewModel.isRunningBulkPlexSectionMaintenance
+                                        disabled: viewModel.selectedPlexTVSectionKey.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection || viewModel.isEmptyingPlexSection || viewModel.isCancellingPlexSectionJob || viewModel.isRunningPlexSectionMaintenance || viewModel.isRunningBulkPlexSectionMaintenance || viewModel.isRetryingFailedPlexSectionActions
                                     ) {
                                         let label = tvSections.first(where: { $0.key == viewModel.selectedPlexTVSectionKey })?.title ?? "TV section"
                                         viewModel.runPlexSectionMaintenance(
@@ -1905,7 +1910,7 @@ struct SettingsView_New: View {
                                     ActionButton(
                                         title: "Run Movie Maintenance",
                                         icon: "wrench.and.screwdriver",
-                                        disabled: viewModel.selectedPlexMovieSectionKey.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection || viewModel.isEmptyingPlexSection || viewModel.isCancellingPlexSectionJob || viewModel.isRunningPlexSectionMaintenance || viewModel.isRunningBulkPlexSectionMaintenance
+                                        disabled: viewModel.selectedPlexMovieSectionKey.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection || viewModel.isEmptyingPlexSection || viewModel.isCancellingPlexSectionJob || viewModel.isRunningPlexSectionMaintenance || viewModel.isRunningBulkPlexSectionMaintenance || viewModel.isRetryingFailedPlexSectionActions
                                     ) {
                                         let label = movieSections.first(where: { $0.key == viewModel.selectedPlexMovieSectionKey })?.title ?? "Movie section"
                                         viewModel.runPlexSectionMaintenance(
@@ -1919,7 +1924,7 @@ struct SettingsView_New: View {
                                     ActionButton(
                                         title: "Maintain All TV Sections",
                                         icon: "wrench.and.screwdriver.fill",
-                                        disabled: tvSections.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection || viewModel.isEmptyingPlexSection || viewModel.isCancellingPlexSectionJob || viewModel.isRunningPlexSectionMaintenance || viewModel.isRunningBulkPlexSectionMaintenance
+                                        disabled: tvSections.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection || viewModel.isEmptyingPlexSection || viewModel.isCancellingPlexSectionJob || viewModel.isRunningPlexSectionMaintenance || viewModel.isRunningBulkPlexSectionMaintenance || viewModel.isRetryingFailedPlexSectionActions
                                     ) {
                                         viewModel.runBulkPlexSectionMaintenance(sectionType: "show")
                                     }
@@ -1927,7 +1932,7 @@ struct SettingsView_New: View {
                                     ActionButton(
                                         title: "Maintain All Movie Sections",
                                         icon: "wrench.and.screwdriver.fill",
-                                        disabled: movieSections.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection || viewModel.isEmptyingPlexSection || viewModel.isCancellingPlexSectionJob || viewModel.isRunningPlexSectionMaintenance || viewModel.isRunningBulkPlexSectionMaintenance
+                                        disabled: movieSections.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection || viewModel.isEmptyingPlexSection || viewModel.isCancellingPlexSectionJob || viewModel.isRunningPlexSectionMaintenance || viewModel.isRunningBulkPlexSectionMaintenance || viewModel.isRetryingFailedPlexSectionActions
                                     ) {
                                         viewModel.runBulkPlexSectionMaintenance(sectionType: "movie")
                                     }
@@ -1937,7 +1942,7 @@ struct SettingsView_New: View {
                                     ActionButton(
                                         title: "Cancel Last Section Job",
                                         icon: "xmark.circle.fill",
-                                        disabled: !hasQueuedSectionJob || viewModel.isCancellingPlexSectionJob || viewModel.isRunningPlexSectionMaintenance || viewModel.isRunningBulkPlexSectionMaintenance
+                                        disabled: !hasQueuedSectionJob || viewModel.isCancellingPlexSectionJob || viewModel.isRunningPlexSectionMaintenance || viewModel.isRunningBulkPlexSectionMaintenance || viewModel.isRetryingFailedPlexSectionActions
                                     ) {
                                         viewModel.cancelLastQueuedPlexSectionJob()
                                     }
@@ -2029,6 +2034,14 @@ struct SettingsView_New: View {
                     VStack(alignment: .leading, spacing: 12) {
                         HStack(spacing: 12) {
                             ActionButton(
+                                title: "Retry Failed (Selected)",
+                                icon: "arrow.clockwise.circle",
+                                disabled: !hasFailedActionsForSelectedSections || viewModel.isRetryingFailedPlexSectionActions || viewModel.isRunningPlexSectionMaintenance || viewModel.isRunningBulkPlexSectionMaintenance || viewModel.isCancellingPlexSectionJob
+                            ) {
+                                viewModel.retryFailedSectionActionsForSelectedSections()
+                            }
+
+                            ActionButton(
                                 title: "Clear Section History",
                                 icon: "trash",
                                 disabled: viewModel.plexSectionActionHistory.isEmpty
@@ -2039,6 +2052,16 @@ struct SettingsView_New: View {
                             Text("Entries: \(viewModel.plexSectionActionHistory.count)")
                                 .font(.system(size: 12))
                                 .foregroundColor(.plexTextSecondary)
+                        }
+
+                        if viewModel.isRetryingFailedPlexSectionActions {
+                            HStack(spacing: 8) {
+                                ProgressView()
+                                    .progressViewStyle(CircularProgressViewStyle(tint: .plexOrange))
+                                Text("Retrying failed actions for selected sections...")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(.plexTextSecondary)
+                            }
                         }
 
                         if tvSectionHistory.isEmpty && movieSectionHistory.isEmpty {

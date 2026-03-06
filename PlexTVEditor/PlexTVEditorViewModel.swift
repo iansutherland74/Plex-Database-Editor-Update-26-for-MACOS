@@ -188,6 +188,7 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
     @Published var isCancellingPlexSectionJob = false
     @Published var isRunningPlexSectionMaintenance = false
     @Published var isRunningBulkPlexSectionMaintenance = false
+    @Published var isRetryingFailedPlexSectionActions = false
     @Published var bulkPlexSectionMaintenanceProgress: String = ""
     @Published var lastQueuedPlexSectionKey: String = ""
     @Published var lastQueuedPlexSectionLabel: String = ""
@@ -1860,14 +1861,7 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
 
             for action in actions {
                 do {
-                    switch action {
-                    case .refresh:
-                        try await queuePlexSectionRefresh(baseURL: serverURL, token: token, sectionKey: trimmedSectionKey)
-                    case .analyze:
-                        try await queuePlexSectionAnalyze(baseURL: serverURL, token: token, sectionKey: trimmedSectionKey)
-                    case .emptyTrash:
-                        continue
-                    }
+                    try await queuePlexSectionAction(baseURL: serverURL, token: token, sectionKey: trimmedSectionKey, action: action)
                     queuedActions.append(action)
                 } catch {
                     failedActions.append((action, error.localizedDescription))
@@ -1952,14 +1946,7 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
 
                 for action in actions {
                     do {
-                        switch action {
-                        case .refresh:
-                            try await queuePlexSectionRefresh(baseURL: serverURL, token: token, sectionKey: section.key)
-                        case .analyze:
-                            try await queuePlexSectionAnalyze(baseURL: serverURL, token: token, sectionKey: section.key)
-                        case .emptyTrash:
-                            continue
-                        }
+                        try await queuePlexSectionAction(baseURL: serverURL, token: token, sectionKey: section.key, action: action)
                         queuedActions.append(action)
                     } catch {
                         failedActions.append((action, error.localizedDescription))
@@ -2005,6 +1992,83 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
                 self.isRunningBulkPlexSectionMaintenance = false
                 self.bulkPlexSectionMaintenanceProgress = ""
                 self.statusMessage = "Bulk \(scopeLabel) maintenance complete: \(sectionSuccessCount) succeeded, \(sectionFailureCount) with failures"
+            }
+        }
+    }
+
+    func retryFailedSectionActionsForSelectedSections() {
+        let normalizedServerURL = normalizePlexServerURL(plexServerURL)
+        guard !normalizedServerURL.isEmpty,
+              let serverURL = URL(string: normalizedServerURL) else {
+            statusMessage = "Enter a valid Plex server URL"
+            return
+        }
+
+        let token = plexToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !token.isEmpty else {
+            statusMessage = "Enter Plex token before retrying failed actions"
+            return
+        }
+
+        let sectionKeys = Set([
+            selectedPlexTVSectionKey.trimmingCharacters(in: .whitespacesAndNewlines),
+            selectedPlexMovieSectionKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        ].filter { !$0.isEmpty })
+
+        guard !sectionKeys.isEmpty else {
+            statusMessage = "Select a TV or Movie section before retrying"
+            return
+        }
+
+        let failedEntries = latestFailedSectionActions(for: sectionKeys)
+        guard !failedEntries.isEmpty else {
+            statusMessage = "No failed section actions to retry for selected sections"
+            return
+        }
+
+        isRetryingFailedPlexSectionActions = true
+        statusMessage = "Retrying \(failedEntries.count) failed section action(s)..."
+
+        Task {
+            var queuedResults: [(String, String, PlexSectionActionKind)] = []
+            var failedResults: [(String, String, PlexSectionActionKind, String)] = []
+
+            for entry in failedEntries {
+                guard let action = PlexSectionActionKind(rawValue: entry.actionLabel) else {
+                    continue
+                }
+
+                do {
+                    try await queuePlexSectionAction(baseURL: serverURL, token: token, sectionKey: entry.sectionKey, action: action)
+                    queuedResults.append((entry.sectionKey, entry.sectionLabel, action))
+                } catch {
+                    failedResults.append((entry.sectionKey, entry.sectionLabel, action, error.localizedDescription))
+                }
+            }
+
+            DispatchQueue.main.async {
+                self.isRetryingFailedPlexSectionActions = false
+
+                for (sectionKey, sectionLabel, action) in queuedResults {
+                    self.rememberQueuedPlexSectionJob(sectionKey: sectionKey, sectionLabel: sectionLabel, action: action)
+                    self.recordPlexSectionAction(
+                        sectionKey: sectionKey,
+                        sectionLabel: sectionLabel,
+                        action: action,
+                        outcome: "Retry queued"
+                    )
+                }
+
+                for (sectionKey, sectionLabel, action, message) in failedResults {
+                    self.recordPlexSectionAction(
+                        sectionKey: sectionKey,
+                        sectionLabel: sectionLabel,
+                        action: action,
+                        outcome: "Retry failed: \(message)"
+                    )
+                }
+
+                self.statusMessage = "Retry complete: \(queuedResults.count) queued, \(failedResults.count) failed"
             }
         }
     }
@@ -2490,6 +2554,35 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
             code: lastStatusCode ?? -1,
             userInfo: [NSLocalizedDescriptionKey: "Plex server did not accept cancel for this section job"]
         )
+    }
+
+    private func queuePlexSectionAction(baseURL: URL, token: String, sectionKey: String, action: PlexSectionActionKind) async throws {
+        switch action {
+        case .refresh:
+            try await queuePlexSectionRefresh(baseURL: baseURL, token: token, sectionKey: sectionKey)
+        case .analyze:
+            try await queuePlexSectionAnalyze(baseURL: baseURL, token: token, sectionKey: sectionKey)
+        case .emptyTrash:
+            try await queuePlexSectionEmptyTrash(baseURL: baseURL, token: token, sectionKey: sectionKey)
+        }
+    }
+
+    private func latestFailedSectionActions(for sectionKeys: Set<String>) -> [PlexSectionActionHistoryEntry] {
+        var seen: Set<String> = []
+        var results: [PlexSectionActionHistoryEntry] = []
+
+        for entry in plexSectionActionHistory {
+            guard sectionKeys.contains(entry.sectionKey) else { continue }
+            guard entry.outcome.lowercased().contains("failed") else { continue }
+
+            let dedupeKey = "\(entry.sectionKey)|\(entry.actionLabel)"
+            guard !seen.contains(dedupeKey) else { continue }
+
+            seen.insert(dedupeKey)
+            results.append(entry)
+        }
+
+        return results
     }
 
     private func rememberQueuedPlexSectionJob(sectionKey: String, sectionLabel: String, action: PlexSectionActionKind) {
