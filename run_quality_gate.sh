@@ -115,6 +115,7 @@ if [ "$RUN_SHELL_LINT" -eq 1 ]; then
     run_step "Shell lint run_live_plex_smoke.sh" bash -n ./run_live_plex_smoke.sh
     run_step "Shell lint run_release_prep.sh" bash -n ./run_release_prep.sh
     run_step "Shell lint generate_release_notes.sh" bash -n ./generate_release_notes.sh
+    run_step "Shell lint create_release_tag.sh" bash -n ./create_release_tag.sh
     run_step "Shell lint run_quality_gate.sh" bash -n ./run_quality_gate.sh
 fi
 

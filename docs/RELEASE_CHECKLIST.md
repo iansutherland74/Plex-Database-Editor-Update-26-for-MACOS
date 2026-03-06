@@ -50,6 +50,14 @@ cd /Users/sutherland/repo
 ./run_release_prep.sh --skip-build --notes-from-tag v1.0.0 --notes-to-ref HEAD
 ```
 
+Optional helper to prepare and create/push a release tag:
+
+```bash
+cd /Users/sutherland/repo
+./create_release_tag.sh --version v1.0.1
+# then: ./create_release_tag.sh --version v1.0.1 --apply --push
+```
+
 ## Outputs
 - Report file: `docs/release_prep_report_<timestamp>.md`
 - Notes file: `docs/release_notes_<timestamp>.md` (unless `--notes-output` is used)

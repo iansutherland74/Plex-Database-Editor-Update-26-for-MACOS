@@ -145,6 +145,27 @@ Useful variants:
 ./generate_release_notes.sh --from-tag v1.0.0 --output docs/release_notes_next.md
 ```
 
+## Create Release Tag (Optional)
+
+Prepare release notes/report for a tag in dry-run mode:
+
+```bash
+cd /Users/sutherland/repo
+./create_release_tag.sh --version v1.0.1
+```
+
+Create the annotated tag locally:
+
+```bash
+./create_release_tag.sh --version v1.0.1 --apply
+```
+
+Create and push tag:
+
+```bash
+./create_release_tag.sh --version v1.0.1 --apply --push
+```
+
 ## First Launch Setup
 
 In the app Settings tab, verify:
