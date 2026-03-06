@@ -1,6 +1,7 @@
 import Foundation
 import SQLite3
 import Cocoa
+import UserNotifications
 
 struct PlexServerIdentity {
     let friendlyName: String
@@ -39,6 +40,67 @@ struct PlexSectionActionHistoryEntry: Identifiable {
     let sectionLabel: String
     let actionLabel: String
     let outcome: String
+}
+
+struct PlexServerProfile: Identifiable, Codable {
+    let id: UUID
+    let name: String
+    let serverURL: String
+    let token: String
+}
+
+struct PlexSectionActionPreset: Identifiable, Codable {
+    let id: UUID
+    let name: String
+    let sectionType: String
+    let includeRefresh: Bool
+    let includeAnalyze: Bool
+    let includeEmptyTrash: Bool
+    let runOnAllSections: Bool
+}
+
+struct PlexCapabilities: Codable {
+    var canRefreshSection: Bool
+    var canAnalyzeSection: Bool
+    var canEmptyTrashSection: Bool
+    var canCancelSectionJob: Bool
+    var canAnalyzeItem: Bool
+
+    static let unknown = PlexCapabilities(
+        canRefreshSection: true,
+        canAnalyzeSection: true,
+        canEmptyTrashSection: true,
+        canCancelSectionJob: true,
+        canAnalyzeItem: true
+    )
+}
+
+struct PlexSectionJobMonitorItem: Identifiable {
+    let id: UUID
+    let sectionKey: String
+    let sectionLabel: String
+    let actionLabel: String
+    let startedAt: Date
+    var finishedAt: Date?
+    var status: String
+}
+
+struct PlexTrashPreviewRow: Identifiable {
+    let id = UUID()
+    let sectionKey: String
+    let sectionLabel: String
+    let trashCount: Int
+}
+
+enum SchedulerFrequency: String, Codable, CaseIterable {
+    case daily
+    case weekly
+}
+
+enum SchedulerScope: String, Codable, CaseIterable {
+    case tv
+    case movie
+    case both
 }
 
 private final class PlexIdentityXMLParserDelegate: NSObject, XMLParserDelegate {
@@ -86,6 +148,23 @@ private final class PlexSectionsXMLParserDelegate: NSObject, XMLParserDelegate {
                 type: type
             )
         )
+    }
+}
+
+private final class PlexMediaContainerSizeParserDelegate: NSObject, XMLParserDelegate {
+    var size: Int?
+
+    func parser(
+        _ parser: XMLParser,
+        didStartElement elementName: String,
+        namespaceURI: String?,
+        qualifiedName qName: String?,
+        attributes attributeDict: [String: String] = [:]
+    ) {
+        guard elementName == "MediaContainer" else { return }
+        if let sizeText = attributeDict["size"], let parsed = Int(sizeText) {
+            size = parsed
+        }
     }
 }
 
@@ -202,6 +281,24 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
     @Published var isRunningBulkPlexSectionMaintenance = false
     @Published var isRetryingFailedPlexSectionActions = false
     @Published var bulkPlexSectionMaintenanceProgress: String = ""
+    @Published var isPreviewingSectionTrash = false
+    @Published var sectionTrashPreviewRows: [PlexTrashPreviewRow] = []
+    @Published var plexServerProfiles: [PlexServerProfile] = []
+    @Published var selectedPlexProfileId: String = ""
+    @Published var plexActionPresets: [PlexSectionActionPreset] = []
+    @Published var selectedPlexPresetId: String = ""
+    @Published var sectionActionMaxRetries: Int = 1
+    @Published var sectionActionRetryDelaySeconds: Double = 0.5
+    @Published var schedulerEnabled = false
+    @Published var schedulerFrequency: SchedulerFrequency = .daily
+    @Published var schedulerScope: SchedulerScope = .both
+    @Published var schedulerLastRunAt: Date?
+    @Published var schedulerNextRunAt: Date?
+    @Published var notificationsEnabled = false
+    @Published var capabilitySummary: String = "Unknown"
+    @Published var plexCapabilities: PlexCapabilities = .unknown
+    @Published var activeSectionJobs: [PlexSectionJobMonitorItem] = []
+    @Published var completedSectionJobs: [PlexSectionJobMonitorItem] = []
     @Published var lastQueuedPlexSectionKey: String = ""
     @Published var lastQueuedPlexSectionLabel: String = ""
     @Published var lastQueuedPlexSectionAction: String = ""
@@ -223,6 +320,7 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
     private var lastDryRunSeasonNumber: Int?
     private var lastDryRunEpisodeNumber: Int?
     private var lastDryRunShowRef: String?
+    private var schedulerTimer: Timer?
 
     private let defaultPlexSqlitePath = "/Applications/Plex Media Server.app/Contents/MacOS/Plex SQLite"
     private let legacyPlexSqlitePath = "/Applications/Plex Media Server.app/Contents/Resources/Support/Plex SQLite"
@@ -242,6 +340,8 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
     
     init() {
         loadSettings()
+        ensureDefaultPresetsIfNeeded()
+        refreshSchedulerTimerState()
     }
     
     // MARK: - Plex Database Access
@@ -1362,8 +1462,10 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
             } else {
                 statusMessage = "Restored backup \(sourceURL.lastPathComponent)"
             }
+            notifyIfEnabled(title: "Backup Restored", body: sourceURL.lastPathComponent)
         } catch {
             statusMessage = "Backup restore failed: \(error.localizedDescription)"
+            notifyIfEnabled(title: "Backup Restore Failed", body: error.localizedDescription)
         }
     }
 
@@ -1493,6 +1595,26 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
             self.plexToken = settings.plexToken ?? ""
             self.selectedPlexTVSectionKey = settings.selectedPlexTVSectionKey ?? ""
             self.selectedPlexMovieSectionKey = settings.selectedPlexMovieSectionKey ?? ""
+            self.plexServerProfiles = settings.plexServerProfiles ?? []
+            self.selectedPlexProfileId = settings.selectedPlexProfileId ?? ""
+            self.plexActionPresets = settings.plexActionPresets ?? []
+            self.selectedPlexPresetId = settings.selectedPlexPresetId ?? ""
+            self.sectionActionMaxRetries = max(0, settings.sectionActionMaxRetries ?? 1)
+            self.sectionActionRetryDelaySeconds = max(0, settings.sectionActionRetryDelaySeconds ?? 0.5)
+            self.schedulerEnabled = settings.schedulerEnabled ?? false
+            if let frequencyRaw = settings.schedulerFrequency,
+               let frequency = SchedulerFrequency(rawValue: frequencyRaw) {
+                self.schedulerFrequency = frequency
+            }
+            if let scopeRaw = settings.schedulerScope,
+               let scope = SchedulerScope(rawValue: scopeRaw) {
+                self.schedulerScope = scope
+            }
+            self.schedulerLastRunAt = settings.schedulerLastRunAt
+            self.schedulerNextRunAt = settings.schedulerNextRunAt
+            self.notificationsEnabled = settings.notificationsEnabled ?? false
+            self.plexCapabilities = settings.plexCapabilities ?? .unknown
+            self.capabilitySummary = settings.capabilitySummary ?? "Unknown"
             if normalizedServerURL != savedServerURL {
                 migratedSettings = true
             }
@@ -1505,6 +1627,20 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
             self.plexToken = ""
             self.selectedPlexTVSectionKey = ""
             self.selectedPlexMovieSectionKey = ""
+            self.plexServerProfiles = []
+            self.selectedPlexProfileId = ""
+            self.plexActionPresets = []
+            self.selectedPlexPresetId = ""
+            self.sectionActionMaxRetries = 1
+            self.sectionActionRetryDelaySeconds = 0.5
+            self.schedulerEnabled = false
+            self.schedulerFrequency = .daily
+            self.schedulerScope = .both
+            self.schedulerLastRunAt = nil
+            self.schedulerNextRunAt = nil
+            self.notificationsEnabled = false
+            self.plexCapabilities = .unknown
+            self.capabilitySummary = "Unknown"
         }
 
         if migratedSettings {
@@ -1530,11 +1666,281 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
             plexServerURL: self.plexServerURL,
             plexToken: plexToken.trimmingCharacters(in: .whitespacesAndNewlines),
             selectedPlexTVSectionKey: selectedPlexTVSectionKey,
-            selectedPlexMovieSectionKey: selectedPlexMovieSectionKey
+            selectedPlexMovieSectionKey: selectedPlexMovieSectionKey,
+            plexServerProfiles: plexServerProfiles,
+            selectedPlexProfileId: selectedPlexProfileId,
+            plexActionPresets: plexActionPresets,
+            selectedPlexPresetId: selectedPlexPresetId,
+            sectionActionMaxRetries: sectionActionMaxRetries,
+            sectionActionRetryDelaySeconds: sectionActionRetryDelaySeconds,
+            schedulerEnabled: schedulerEnabled,
+            schedulerFrequency: schedulerFrequency.rawValue,
+            schedulerScope: schedulerScope.rawValue,
+            schedulerLastRunAt: schedulerLastRunAt,
+            schedulerNextRunAt: schedulerNextRunAt,
+            notificationsEnabled: notificationsEnabled,
+            plexCapabilities: plexCapabilities,
+            capabilitySummary: capabilitySummary
         )
         if let encoded = try? JSONEncoder().encode(settings) {
             UserDefaults.standard.set(encoded, forKey: "PlexTVEditorSettings")
             statusMessage = "Settings saved successfully"
+        }
+        refreshSchedulerTimerState()
+    }
+
+    func saveCurrentServerAsProfile(name: String) {
+        let profileName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedServerURL = normalizePlexServerURL(plexServerURL)
+        let trimmedToken = plexToken.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !profileName.isEmpty else {
+            statusMessage = "Enter a profile name"
+            return
+        }
+        guard !normalizedServerURL.isEmpty, !trimmedToken.isEmpty else {
+            statusMessage = "Server URL and token are required to save profile"
+            return
+        }
+
+        if let existingIndex = plexServerProfiles.firstIndex(where: { $0.name.caseInsensitiveCompare(profileName) == .orderedSame }) {
+            plexServerProfiles[existingIndex] = PlexServerProfile(
+                id: plexServerProfiles[existingIndex].id,
+                name: profileName,
+                serverURL: normalizedServerURL,
+                token: trimmedToken
+            )
+            selectedPlexProfileId = plexServerProfiles[existingIndex].id.uuidString
+            statusMessage = "Updated server profile \(profileName)"
+        } else {
+            let profile = PlexServerProfile(id: UUID(), name: profileName, serverURL: normalizedServerURL, token: trimmedToken)
+            plexServerProfiles.append(profile)
+            plexServerProfiles.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            selectedPlexProfileId = profile.id.uuidString
+            statusMessage = "Saved server profile \(profileName)"
+        }
+
+        saveSettings()
+    }
+
+    func applySelectedServerProfile() {
+        guard let uuid = UUID(uuidString: selectedPlexProfileId),
+              let profile = plexServerProfiles.first(where: { $0.id == uuid }) else {
+            statusMessage = "Select a valid server profile"
+            return
+        }
+
+        plexServerURL = normalizePlexServerURL(profile.serverURL)
+        plexToken = profile.token
+        statusMessage = "Applied profile \(profile.name)"
+        saveSettings()
+    }
+
+    func deleteSelectedServerProfile() {
+        guard let uuid = UUID(uuidString: selectedPlexProfileId) else {
+            statusMessage = "Select a server profile to delete"
+            return
+        }
+
+        guard let index = plexServerProfiles.firstIndex(where: { $0.id == uuid }) else {
+            statusMessage = "Selected profile no longer exists"
+            return
+        }
+
+        let name = plexServerProfiles[index].name
+        plexServerProfiles.remove(at: index)
+        selectedPlexProfileId = plexServerProfiles.first?.id.uuidString ?? ""
+        statusMessage = "Deleted profile \(name)"
+        saveSettings()
+    }
+
+    func addPreset(name: String, sectionType: String, includeRefresh: Bool, includeAnalyze: Bool, includeEmptyTrash: Bool, runOnAllSections: Bool) {
+        let presetName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedType = sectionType.lowercased()
+        guard !presetName.isEmpty else {
+            statusMessage = "Enter a preset name"
+            return
+        }
+        guard normalizedType == "show" || normalizedType == "movie" else {
+            statusMessage = "Preset section type must be TV or Movie"
+            return
+        }
+        guard includeRefresh || includeAnalyze || includeEmptyTrash else {
+            statusMessage = "Preset must include at least one action"
+            return
+        }
+
+        let preset = PlexSectionActionPreset(
+            id: UUID(),
+            name: presetName,
+            sectionType: normalizedType,
+            includeRefresh: includeRefresh,
+            includeAnalyze: includeAnalyze,
+            includeEmptyTrash: includeEmptyTrash,
+            runOnAllSections: runOnAllSections
+        )
+        plexActionPresets.append(preset)
+        plexActionPresets.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        selectedPlexPresetId = preset.id.uuidString
+        statusMessage = "Preset \(presetName) added"
+        saveSettings()
+    }
+
+    func deleteSelectedPreset() {
+        guard let uuid = UUID(uuidString: selectedPlexPresetId),
+              let index = plexActionPresets.firstIndex(where: { $0.id == uuid }) else {
+            statusMessage = "Select a preset to delete"
+            return
+        }
+
+        let name = plexActionPresets[index].name
+        plexActionPresets.remove(at: index)
+        selectedPlexPresetId = plexActionPresets.first?.id.uuidString ?? ""
+        statusMessage = "Deleted preset \(name)"
+        saveSettings()
+    }
+
+    func runSelectedPreset() {
+        guard let uuid = UUID(uuidString: selectedPlexPresetId),
+              let preset = plexActionPresets.first(where: { $0.id == uuid }) else {
+            statusMessage = "Select a preset to run"
+            return
+        }
+
+        let sections = plexLibrarySections
+            .filter { $0.type.lowercased() == preset.sectionType }
+            .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+
+        guard !sections.isEmpty else {
+            statusMessage = "Load sections first before running preset"
+            return
+        }
+
+        let targetSections: [PlexLibrarySection]
+        if preset.runOnAllSections {
+            targetSections = sections
+        } else {
+            let selectedKey = preset.sectionType == "show" ? selectedPlexTVSectionKey : selectedPlexMovieSectionKey
+            let trimmed = selectedKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            targetSections = sections.filter { $0.key == trimmed }
+        }
+
+        guard !targetSections.isEmpty else {
+            statusMessage = "Preset requires a selected section"
+            return
+        }
+
+        runPresetOnSections(preset: preset, sections: targetSections)
+    }
+
+    func previewTrashForLoadedSections() {
+        let normalizedServerURL = normalizePlexServerURL(plexServerURL)
+        guard !normalizedServerURL.isEmpty,
+              let serverURL = URL(string: normalizedServerURL) else {
+            statusMessage = "Enter a valid Plex server URL"
+            return
+        }
+
+        let token = plexToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !token.isEmpty else {
+            statusMessage = "Enter Plex token before previewing trash"
+            return
+        }
+
+        guard !plexLibrarySections.isEmpty else {
+            statusMessage = "Load Plex sections first"
+            return
+        }
+
+        isPreviewingSectionTrash = true
+        statusMessage = "Previewing trash counts..."
+
+        Task {
+            var rows: [PlexTrashPreviewRow] = []
+            for section in plexLibrarySections.sorted(by: { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }) {
+                let count = (try? await fetchTrashCount(baseURL: serverURL, token: token, sectionKey: section.key)) ?? 0
+                rows.append(PlexTrashPreviewRow(sectionKey: section.key, sectionLabel: section.title, trashCount: count))
+            }
+
+            DispatchQueue.main.async {
+                self.isPreviewingSectionTrash = false
+                self.sectionTrashPreviewRows = rows
+                let total = rows.reduce(0) { $0 + $1.trashCount }
+                self.statusMessage = "Trash preview ready: \(total) item(s) across \(rows.count) section(s)"
+            }
+        }
+    }
+
+    func runRollbackWizard(reRunSafeActions: Bool) {
+        refreshBackupFiles()
+        guard let latestBackup = backupFiles.sorted(by: { $0.modifiedAt > $1.modifiedAt }).first else {
+            statusMessage = "No backups available for rollback"
+            return
+        }
+
+        restoreBackup(from: latestBackup.path)
+
+        if reRunSafeActions {
+            if !selectedPlexTVSectionKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               let tvLabel = plexLibrarySections.first(where: { $0.key == selectedPlexTVSectionKey })?.title {
+                runPlexSectionMaintenance(sectionKey: selectedPlexTVSectionKey, sectionLabel: tvLabel)
+            }
+            if !selectedPlexMovieSectionKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               let movieLabel = plexLibrarySections.first(where: { $0.key == selectedPlexMovieSectionKey })?.title {
+                runPlexSectionMaintenance(sectionKey: selectedPlexMovieSectionKey, sectionLabel: movieLabel)
+            }
+        }
+
+        notifyIfEnabled(title: "Rollback Complete", body: reRunSafeActions ? "Rollback completed and safe maintenance started." : "Rollback completed.")
+    }
+
+    func requestNotificationPermission() {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .badge, .sound]) { granted, _ in
+            DispatchQueue.main.async {
+                self.notificationsEnabled = granted
+                self.statusMessage = granted ? "Notifications enabled" : "Notifications permission denied"
+                self.saveSettings()
+            }
+        }
+    }
+
+    func detectPlexCapabilities() {
+        let normalizedServerURL = normalizePlexServerURL(plexServerURL)
+        guard !normalizedServerURL.isEmpty,
+              let serverURL = URL(string: normalizedServerURL) else {
+            statusMessage = "Enter a valid Plex server URL"
+            return
+        }
+
+        let token = plexToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !token.isEmpty else {
+            statusMessage = "Enter Plex token before capability detection"
+            return
+        }
+
+        guard let probeSection = plexLibrarySections.first else {
+            statusMessage = "Load sections first to detect capabilities"
+            return
+        }
+
+        Task {
+            let refresh = await probePlexEndpoint(baseURL: serverURL, token: token, path: "/library/sections/\(probeSection.key)/refresh")
+            let analyze = await probePlexEndpoint(baseURL: serverURL, token: token, path: "/library/sections/\(probeSection.key)/analyze")
+            let emptyTrash = await probePlexEndpoint(baseURL: serverURL, token: token, path: "/library/sections/\(probeSection.key)/emptyTrash")
+            let cancel = await probePlexEndpoint(baseURL: serverURL, token: token, path: "/library/sections/\(probeSection.key)/refresh/cancel")
+
+            DispatchQueue.main.async {
+                self.plexCapabilities = PlexCapabilities(
+                    canRefreshSection: refresh,
+                    canAnalyzeSection: analyze,
+                    canEmptyTrashSection: emptyTrash,
+                    canCancelSectionJob: cancel,
+                    canAnalyzeItem: analyze
+                )
+                self.capabilitySummary = "Refresh: \(refresh ? "Yes" : "No"), Analyze: \(analyze ? "Yes" : "No"), Empty Trash: \(emptyTrash ? "Yes" : "No"), Cancel: \(cancel ? "Yes" : "No")"
+                self.statusMessage = "Capability detection complete"
+                self.saveSettings()
+            }
         }
     }
     
@@ -1580,12 +1986,14 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
                     self.plexServerMachineIdentifier = identity.machineIdentifier
                     self.plexConnectionSummary = "Connected to \(identity.friendlyName)"
                     self.statusMessage = "✓ Plex API connected (\(identity.friendlyName) v\(identity.version))"
+                    self.notifyIfEnabled(title: "Plex Connected", body: "Connected to \(identity.friendlyName)")
                 }
             } catch {
                 DispatchQueue.main.async {
                     self.isTestingPlexConnection = false
                     self.plexConnectionSummary = "Connection failed"
                     self.statusMessage = "✗ Plex API test failed: \(error.localizedDescription)"
+                    self.notifyIfEnabled(title: "Plex Connection Failed", body: error.localizedDescription)
                 }
             }
         }
@@ -1625,6 +2033,7 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
                     }
 
                     self.statusMessage = "Loaded \(sections.count) Plex library section(s)"
+                    self.detectPlexCapabilities()
                 }
             } catch {
                 DispatchQueue.main.async {
@@ -1742,18 +2151,26 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
 
         Task {
             do {
-                try await queuePlexSectionRefresh(baseURL: serverURL, token: token, sectionKey: trimmedSectionKey)
+                try await performTrackedSectionAction(
+                    baseURL: serverURL,
+                    token: token,
+                    sectionKey: trimmedSectionKey,
+                    sectionLabel: sectionLabel,
+                    action: .refresh
+                )
                 DispatchQueue.main.async {
                     self.isRefreshingPlexSection = false
                     self.statusMessage = "Plex section refresh queued for \(sectionLabel)"
                     self.rememberQueuedPlexSectionJob(sectionKey: trimmedSectionKey, sectionLabel: sectionLabel, action: .refresh)
                     self.recordPlexSectionAction(sectionKey: trimmedSectionKey, sectionLabel: sectionLabel, action: .refresh, outcome: "Queued")
+                    self.notifyIfEnabled(title: "Section Refresh Queued", body: sectionLabel)
                 }
             } catch {
                 DispatchQueue.main.async {
                     self.isRefreshingPlexSection = false
                     self.statusMessage = "Section refresh failed for \(sectionLabel): \(error.localizedDescription)"
                     self.recordPlexSectionAction(sectionKey: trimmedSectionKey, sectionLabel: sectionLabel, action: .refresh, outcome: "Failed: \(error.localizedDescription)")
+                    self.notifyIfEnabled(title: "Section Refresh Failed", body: sectionLabel)
                 }
             }
         }
@@ -1784,18 +2201,26 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
 
         Task {
             do {
-                try await queuePlexSectionAnalyze(baseURL: serverURL, token: token, sectionKey: trimmedSectionKey)
+                try await performTrackedSectionAction(
+                    baseURL: serverURL,
+                    token: token,
+                    sectionKey: trimmedSectionKey,
+                    sectionLabel: sectionLabel,
+                    action: .analyze
+                )
                 DispatchQueue.main.async {
                     self.isAnalyzingPlexSection = false
                     self.statusMessage = "Plex section analyze queued for \(sectionLabel)"
                     self.rememberQueuedPlexSectionJob(sectionKey: trimmedSectionKey, sectionLabel: sectionLabel, action: .analyze)
                     self.recordPlexSectionAction(sectionKey: trimmedSectionKey, sectionLabel: sectionLabel, action: .analyze, outcome: "Queued")
+                    self.notifyIfEnabled(title: "Section Analyze Queued", body: sectionLabel)
                 }
             } catch {
                 DispatchQueue.main.async {
                     self.isAnalyzingPlexSection = false
                     self.statusMessage = "Section analyze failed for \(sectionLabel): \(error.localizedDescription)"
                     self.recordPlexSectionAction(sectionKey: trimmedSectionKey, sectionLabel: sectionLabel, action: .analyze, outcome: "Failed: \(error.localizedDescription)")
+                    self.notifyIfEnabled(title: "Section Analyze Failed", body: sectionLabel)
                 }
             }
         }
@@ -1826,18 +2251,26 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
 
         Task {
             do {
-                try await queuePlexSectionEmptyTrash(baseURL: serverURL, token: token, sectionKey: trimmedSectionKey)
+                try await performTrackedSectionAction(
+                    baseURL: serverURL,
+                    token: token,
+                    sectionKey: trimmedSectionKey,
+                    sectionLabel: sectionLabel,
+                    action: .emptyTrash
+                )
                 DispatchQueue.main.async {
                     self.isEmptyingPlexSection = false
                     self.statusMessage = "Plex empty trash queued for \(sectionLabel)"
                     self.rememberQueuedPlexSectionJob(sectionKey: trimmedSectionKey, sectionLabel: sectionLabel, action: .emptyTrash)
                     self.recordPlexSectionAction(sectionKey: trimmedSectionKey, sectionLabel: sectionLabel, action: .emptyTrash, outcome: "Queued")
+                    self.notifyIfEnabled(title: "Empty Trash Queued", body: sectionLabel)
                 }
             } catch {
                 DispatchQueue.main.async {
                     self.isEmptyingPlexSection = false
                     self.statusMessage = "Empty trash failed for \(sectionLabel): \(error.localizedDescription)"
                     self.recordPlexSectionAction(sectionKey: trimmedSectionKey, sectionLabel: sectionLabel, action: .emptyTrash, outcome: "Failed: \(error.localizedDescription)")
+                    self.notifyIfEnabled(title: "Empty Trash Failed", body: sectionLabel)
                 }
             }
         }
@@ -1867,13 +2300,30 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
         statusMessage = "Queueing Plex maintenance for \(sectionLabel)..."
 
         Task {
-            let actions: [PlexSectionActionKind] = [.refresh, .analyze]
+            let actions: [PlexSectionActionKind] = [
+                plexCapabilities.canRefreshSection ? .refresh : nil,
+                plexCapabilities.canAnalyzeSection ? .analyze : nil
+            ].compactMap { $0 }
+
+            guard !actions.isEmpty else {
+                DispatchQueue.main.async {
+                    self.isRunningPlexSectionMaintenance = false
+                    self.statusMessage = "Maintenance unavailable: refresh/analyze not supported by server"
+                }
+                return
+            }
             var queuedActions: [PlexSectionActionKind] = []
             var failedActions: [(PlexSectionActionKind, String)] = []
 
             for action in actions {
                 do {
-                    try await queuePlexSectionAction(baseURL: serverURL, token: token, sectionKey: trimmedSectionKey, action: action)
+                    try await performTrackedSectionAction(
+                        baseURL: serverURL,
+                        token: token,
+                        sectionKey: trimmedSectionKey,
+                        sectionLabel: sectionLabel,
+                        action: action
+                    )
                     queuedActions.append(action)
                 } catch {
                     failedActions.append((action, error.localizedDescription))
@@ -1907,6 +2357,7 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
                 } else {
                     self.statusMessage = "Section maintenance for \(sectionLabel): \(queuedActions.count) succeeded, \(failedActions.count) failed"
                 }
+                self.notifyIfEnabled(title: "Section Maintenance", body: self.statusMessage)
             }
         }
     }
@@ -1947,7 +2398,19 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
         statusMessage = "Running bulk \(scopeLabel) maintenance..."
 
         Task {
-            let actions: [PlexSectionActionKind] = [.refresh, .analyze]
+            let actions: [PlexSectionActionKind] = [
+                plexCapabilities.canRefreshSection ? .refresh : nil,
+                plexCapabilities.canAnalyzeSection ? .analyze : nil
+            ].compactMap { $0 }
+
+            guard !actions.isEmpty else {
+                DispatchQueue.main.async {
+                    self.isRunningBulkPlexSectionMaintenance = false
+                    self.bulkPlexSectionMaintenanceProgress = ""
+                    self.statusMessage = "Bulk maintenance unavailable: refresh/analyze not supported"
+                }
+                return
+            }
             var sectionSuccessCount = 0
             var sectionFailureCount = 0
             var processedCount = 0
@@ -1958,7 +2421,13 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
 
                 for action in actions {
                     do {
-                        try await queuePlexSectionAction(baseURL: serverURL, token: token, sectionKey: section.key, action: action)
+                        try await performTrackedSectionAction(
+                            baseURL: serverURL,
+                            token: token,
+                            sectionKey: section.key,
+                            sectionLabel: section.title,
+                            action: action
+                        )
                         queuedActions.append(action)
                     } catch {
                         failedActions.append((action, error.localizedDescription))
@@ -2004,6 +2473,7 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
                 self.isRunningBulkPlexSectionMaintenance = false
                 self.bulkPlexSectionMaintenanceProgress = ""
                 self.statusMessage = "Bulk \(scopeLabel) maintenance complete: \(sectionSuccessCount) succeeded, \(sectionFailureCount) with failures"
+                self.notifyIfEnabled(title: "Bulk Maintenance Complete", body: self.statusMessage)
             }
         }
     }
@@ -2051,7 +2521,13 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
                 }
 
                 do {
-                    try await queuePlexSectionAction(baseURL: serverURL, token: token, sectionKey: entry.sectionKey, action: action)
+                    try await performTrackedSectionAction(
+                        baseURL: serverURL,
+                        token: token,
+                        sectionKey: entry.sectionKey,
+                        sectionLabel: entry.sectionLabel,
+                        action: action
+                    )
                     queuedResults.append((entry.sectionKey, entry.sectionLabel, action))
                 } catch {
                     failedResults.append((entry.sectionKey, entry.sectionLabel, action, error.localizedDescription))
@@ -2081,6 +2557,7 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
                 }
 
                 self.statusMessage = "Retry complete: \(queuedResults.count) queued, \(failedResults.count) failed"
+                self.notifyIfEnabled(title: "Retry Complete", body: self.statusMessage)
             }
         }
     }
@@ -2122,12 +2599,14 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
                     self.statusMessage = "Cancel requested for \(actionLabel) on \(sectionLabel)"
                     self.recordPlexSectionAction(sectionKey: sectionKey, sectionLabel: sectionLabel, action: action, outcome: "Cancel requested")
                     self.clearQueuedPlexSectionJob()
+                    self.notifyIfEnabled(title: "Section Job Cancel", body: "Cancel requested for \(actionLabel) in \(sectionLabel)")
                 }
             } catch {
                 DispatchQueue.main.async {
                     self.isCancellingPlexSectionJob = false
                     self.statusMessage = "Cancel failed for \(actionLabel) on \(sectionLabel): \(error.localizedDescription)"
                     self.recordPlexSectionAction(sectionKey: sectionKey, sectionLabel: sectionLabel, action: action, outcome: "Cancel failed")
+                    self.notifyIfEnabled(title: "Cancel Failed", body: "\(actionLabel) in \(sectionLabel)")
                 }
             }
         }
@@ -2189,6 +2668,18 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
         formatter.dateStyle = .short
         formatter.timeStyle = .short
         return formatter.string(from: date)
+    }
+
+    func formattedSectionJobDuration(_ job: PlexSectionJobMonitorItem) -> String {
+        let end = job.finishedAt ?? Date()
+        let seconds = max(0, end.timeIntervalSince(job.startedAt))
+        return String(format: "%.1fs", seconds)
+    }
+
+    func clearSectionJobMonitor() {
+        activeSectionJobs.removeAll()
+        completedSectionJobs.removeAll()
+        statusMessage = "Cleared section job monitor"
     }
 
     func unlockAllPlexMetadata(itemIds: [Int], entityLabel: String) {
@@ -2619,6 +3110,262 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
         case .emptyTrash:
             try await queuePlexSectionEmptyTrash(baseURL: baseURL, token: token, sectionKey: sectionKey)
         }
+    }
+
+    private func performTrackedSectionAction(
+        baseURL: URL,
+        token: String,
+        sectionKey: String,
+        sectionLabel: String,
+        action: PlexSectionActionKind
+    ) async throws {
+        let jobId = beginSectionJob(sectionKey: sectionKey, sectionLabel: sectionLabel, actionLabel: action.rawValue)
+        let retries = max(0, sectionActionMaxRetries)
+        let delayNanos = UInt64(max(0, sectionActionRetryDelaySeconds) * 1_000_000_000)
+
+        var lastError: Error?
+
+        for attempt in 0...retries {
+            do {
+                try await queuePlexSectionAction(baseURL: baseURL, token: token, sectionKey: sectionKey, action: action)
+                endSectionJob(jobId: jobId, status: "Queued")
+                return
+            } catch {
+                lastError = error
+                if attempt < retries {
+                    endSectionJob(jobId: jobId, status: "Retrying \(attempt + 1)/\(retries)")
+                    if delayNanos > 0 {
+                        try? await Task.sleep(nanoseconds: delayNanos)
+                    }
+                }
+            }
+        }
+
+        endSectionJob(jobId: jobId, status: "Failed")
+        throw lastError ?? NSError(domain: "PlexTVEditor", code: -1, userInfo: [NSLocalizedDescriptionKey: "Section action failed"])
+    }
+
+    private func beginSectionJob(sectionKey: String, sectionLabel: String, actionLabel: String) -> UUID {
+        let job = PlexSectionJobMonitorItem(
+            id: UUID(),
+            sectionKey: sectionKey,
+            sectionLabel: sectionLabel,
+            actionLabel: actionLabel,
+            startedAt: Date(),
+            finishedAt: nil,
+            status: "Running"
+        )
+
+        DispatchQueue.main.async {
+            self.activeSectionJobs.insert(job, at: 0)
+            if self.activeSectionJobs.count > 100 {
+                self.activeSectionJobs = Array(self.activeSectionJobs.prefix(100))
+            }
+        }
+
+        return job.id
+    }
+
+    private func endSectionJob(jobId: UUID, status: String) {
+        DispatchQueue.main.async {
+            guard let index = self.activeSectionJobs.firstIndex(where: { $0.id == jobId }) else { return }
+            var job = self.activeSectionJobs.remove(at: index)
+            job.finishedAt = Date()
+            job.status = status
+            self.completedSectionJobs.insert(job, at: 0)
+            if self.completedSectionJobs.count > 300 {
+                self.completedSectionJobs = Array(self.completedSectionJobs.prefix(300))
+            }
+        }
+    }
+
+    private func refreshSchedulerTimerState() {
+        schedulerTimer?.invalidate()
+        schedulerTimer = nil
+
+        guard schedulerEnabled else { return }
+        if schedulerNextRunAt == nil {
+            schedulerNextRunAt = nextSchedulerRunDate(from: Date())
+        }
+
+        schedulerTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            self?.evaluateSchedulerTick()
+        }
+    }
+
+    private func evaluateSchedulerTick() {
+        guard schedulerEnabled else { return }
+        guard let nextRun = schedulerNextRunAt else {
+            schedulerNextRunAt = nextSchedulerRunDate(from: Date())
+            return
+        }
+
+        guard Date() >= nextRun else { return }
+
+        switch schedulerScope {
+        case .tv:
+            runBulkPlexSectionMaintenance(sectionType: "show")
+        case .movie:
+            runBulkPlexSectionMaintenance(sectionType: "movie")
+        case .both:
+            runBulkPlexSectionMaintenance(sectionType: "show")
+            runBulkPlexSectionMaintenance(sectionType: "movie")
+        }
+
+        schedulerLastRunAt = Date()
+        schedulerNextRunAt = nextSchedulerRunDate(from: Date())
+        saveSettings()
+        notifyIfEnabled(title: "Scheduled Maintenance", body: "Scheduled Plex maintenance started")
+    }
+
+    private func nextSchedulerRunDate(from date: Date) -> Date {
+        let calendar = Calendar.current
+        switch schedulerFrequency {
+        case .daily:
+            return calendar.date(byAdding: .day, value: 1, to: date) ?? date.addingTimeInterval(86400)
+        case .weekly:
+            return calendar.date(byAdding: .day, value: 7, to: date) ?? date.addingTimeInterval(604800)
+        }
+    }
+
+    private func runPresetOnSections(preset: PlexSectionActionPreset, sections: [PlexLibrarySection]) {
+        let normalizedServerURL = normalizePlexServerURL(plexServerURL)
+        guard !normalizedServerURL.isEmpty,
+              let serverURL = URL(string: normalizedServerURL) else {
+            statusMessage = "Enter a valid Plex server URL"
+            return
+        }
+
+        let token = plexToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !token.isEmpty else {
+            statusMessage = "Enter Plex token before running preset"
+            return
+        }
+
+        let actions: [PlexSectionActionKind] = [
+            (preset.includeRefresh && plexCapabilities.canRefreshSection) ? .refresh : nil,
+            (preset.includeAnalyze && plexCapabilities.canAnalyzeSection) ? .analyze : nil,
+            (preset.includeEmptyTrash && plexCapabilities.canEmptyTrashSection) ? .emptyTrash : nil
+        ].compactMap { $0 }
+
+        guard !actions.isEmpty else {
+            statusMessage = "Preset has no enabled actions"
+            return
+        }
+
+        isRunningBulkPlexSectionMaintenance = true
+        bulkPlexSectionMaintenanceProgress = "0/\(sections.count) sections queued"
+
+        Task {
+            var completed = 0
+            for section in sections {
+                for action in actions {
+                    _ = try? await performTrackedSectionAction(
+                        baseURL: serverURL,
+                        token: token,
+                        sectionKey: section.key,
+                        sectionLabel: section.title,
+                        action: action
+                    )
+                    DispatchQueue.main.async {
+                        self.recordPlexSectionAction(sectionKey: section.key, sectionLabel: section.title, action: action, outcome: "Queued via preset \(preset.name)")
+                    }
+                }
+                completed += 1
+                let progress = "\(completed)/\(sections.count) sections queued"
+                DispatchQueue.main.async {
+                    self.bulkPlexSectionMaintenanceProgress = progress
+                }
+            }
+
+            DispatchQueue.main.async {
+                self.isRunningBulkPlexSectionMaintenance = false
+                self.bulkPlexSectionMaintenanceProgress = ""
+                self.statusMessage = "Preset \(preset.name) queued for \(sections.count) section(s)"
+                self.notifyIfEnabled(title: "Preset Queued", body: "\(preset.name) queued for \(sections.count) section(s)")
+            }
+        }
+    }
+
+    private func fetchTrashCount(baseURL: URL, token: String, sectionKey: String) async throws -> Int {
+        var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
+        components?.path = "/library/sections/\(sectionKey)/all"
+        components?.queryItems = [
+            URLQueryItem(name: "trash", value: "1"),
+            URLQueryItem(name: "X-Plex-Token", value: token)
+        ]
+
+        guard let url = components?.url else {
+            throw URLError(.badURL)
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 15
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw URLError(.badServerResponse)
+        }
+
+        let parserDelegate = PlexMediaContainerSizeParserDelegate()
+        let parser = XMLParser(data: data)
+        parser.delegate = parserDelegate
+        if parser.parse(), let count = parserDelegate.size {
+            return count
+        }
+
+        if let xmlText = String(data: data, encoding: .utf8) {
+            return xmlText.components(separatedBy: "<Video ").count - 1
+        }
+
+        return 0
+    }
+
+    private func ensureDefaultPresetsIfNeeded() {
+        guard plexActionPresets.isEmpty else { return }
+        plexActionPresets = [
+            PlexSectionActionPreset(id: UUID(), name: "TV Safe Maintenance", sectionType: "show", includeRefresh: true, includeAnalyze: true, includeEmptyTrash: false, runOnAllSections: false),
+            PlexSectionActionPreset(id: UUID(), name: "Movie Safe Maintenance", sectionType: "movie", includeRefresh: true, includeAnalyze: true, includeEmptyTrash: false, runOnAllSections: false),
+            PlexSectionActionPreset(id: UUID(), name: "TV Full Cleanup", sectionType: "show", includeRefresh: true, includeAnalyze: true, includeEmptyTrash: true, runOnAllSections: true)
+        ]
+        selectedPlexPresetId = plexActionPresets.first?.id.uuidString ?? ""
+    }
+
+    private func notifyIfEnabled(title: String, body: String) {
+        guard notificationsEnabled else { return }
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+
+        let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
+    }
+
+    private func probePlexEndpoint(baseURL: URL, token: String, path: String) async -> Bool {
+        var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
+        components?.path = path
+        components?.queryItems = [URLQueryItem(name: "X-Plex-Token", value: token)]
+
+        guard let url = components?.url else { return false }
+
+        let methods = ["OPTIONS", "HEAD"]
+        for method in methods {
+            do {
+                var request = URLRequest(url: url)
+                request.httpMethod = method
+                request.timeoutInterval = 8
+                let (_, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse else { continue }
+                if http.statusCode == 404 { continue }
+                return true
+            } catch {
+                continue
+            }
+        }
+
+        return false
     }
 
     private func latestFailedSectionActions(for sectionKeys: Set<String>) -> [PlexSectionActionHistoryEntry] {
@@ -3311,4 +4058,18 @@ struct Settings: Codable {
     let plexToken: String?
     let selectedPlexTVSectionKey: String?
     let selectedPlexMovieSectionKey: String?
+    let plexServerProfiles: [PlexServerProfile]?
+    let selectedPlexProfileId: String?
+    let plexActionPresets: [PlexSectionActionPreset]?
+    let selectedPlexPresetId: String?
+    let sectionActionMaxRetries: Int?
+    let sectionActionRetryDelaySeconds: Double?
+    let schedulerEnabled: Bool?
+    let schedulerFrequency: String?
+    let schedulerScope: String?
+    let schedulerLastRunAt: Date?
+    let schedulerNextRunAt: Date?
+    let notificationsEnabled: Bool?
+    let plexCapabilities: PlexCapabilities?
+    let capabilitySummary: String?
 }

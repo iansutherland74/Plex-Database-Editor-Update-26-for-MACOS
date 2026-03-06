@@ -12,6 +12,16 @@ extension Color {
     static let plexTextSecondary = Color(red: 0.65, green: 0.65, blue: 0.65)
 }
 
+extension NumberFormatter {
+    static var decimalTwoDigits: NumberFormatter {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .decimal
+        formatter.minimumFractionDigits = 0
+        formatter.maximumFractionDigits = 2
+        return formatter
+    }
+}
+
 struct ContentView: View {
     @StateObject private var viewModel = PlexTVEditorViewModel()
     @State private var selectedTab: Int = 0
@@ -743,7 +753,7 @@ struct EpisodesSection_New: View {
                                     title: "Analyze in Plex",
                                     icon: "waveform.path.ecg",
                                     role: .secondary,
-                                    disabled: viewModel.episodes.isEmpty
+                                    disabled: viewModel.episodes.isEmpty || !viewModel.plexCapabilities.canAnalyzeItem
                                 ) {
                                     let orderedIds = orderedActionEpisodeIds()
                                     viewModel.analyzePlexMetadata(itemIds: orderedIds, entityLabel: "episode")
@@ -1506,7 +1516,7 @@ struct MoviesDetailView_New: View {
                                 ActionButton(
                                     title: "Analyze in Plex",
                                     icon: "waveform.path.ecg",
-                                    disabled: selectedMovieIds.isEmpty
+                                    disabled: selectedMovieIds.isEmpty || !viewModel.plexCapabilities.canAnalyzeItem
                                 ) {
                                     viewModel.analyzePlexMetadata(itemIds: Array(selectedMovieIds), entityLabel: "movie")
                                 }
@@ -1611,8 +1621,21 @@ struct SettingsView_New: View {
     @State private var restoringBackupPath: String?
     @State private var pendingRestoreBackup: BackupFileItem?
     @State private var pendingSectionTrashConfirmation: SectionTrashConfirmation?
+    @State private var showRollbackWizardConfirm = false
+    @State private var rollbackIncludeSafeRerun = true
     @State private var backupSearchText: String = ""
     @State private var backupSortMode: BackupSortMode = .newest
+    @State private var newProfileName: String = ""
+    @State private var newPresetName: String = ""
+    @State private var newPresetSectionType: String = "show"
+    @State private var newPresetIncludeRefresh = true
+    @State private var newPresetIncludeAnalyze = true
+    @State private var newPresetIncludeEmptyTrash = false
+    @State private var newPresetRunOnAllSections = false
+    @State private var sectionHistorySearchText: String = ""
+    @State private var sectionHistoryActionFilter: String = "All"
+    @State private var sectionHistoryOutcomeFilter: String = "All"
+    @State private var sectionHistoryDaysFilter: String = "All"
 
     private var filteredBackupFiles: [BackupFileItem] {
         let query = backupSearchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -1638,13 +1661,13 @@ struct SettingsView_New: View {
     private var tvSectionHistory: [PlexSectionActionHistoryEntry] {
         let key = viewModel.selectedPlexTVSectionKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else { return [] }
-        return viewModel.plexSectionActionHistory.filter { $0.sectionKey == key }
+        return filteredHistoryEntries(from: viewModel.plexSectionActionHistory.filter { $0.sectionKey == key })
     }
 
     private var movieSectionHistory: [PlexSectionActionHistoryEntry] {
         let key = viewModel.selectedPlexMovieSectionKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else { return [] }
-        return viewModel.plexSectionActionHistory.filter { $0.sectionKey == key }
+        return filteredHistoryEntries(from: viewModel.plexSectionActionHistory.filter { $0.sectionKey == key })
     }
 
     private var hasQueuedSectionJob: Bool {
@@ -1665,9 +1688,39 @@ struct SettingsView_New: View {
 
     private var sectionHistoryExportCount: Int {
         guard !selectedSectionHistoryKeys.isEmpty else {
-            return viewModel.plexSectionActionHistory.count
+            return filteredHistoryEntries(from: viewModel.plexSectionActionHistory).count
         }
-        return viewModel.plexSectionActionHistory.filter { selectedSectionHistoryKeys.contains($0.sectionKey) }.count
+        return filteredHistoryEntries(from: viewModel.plexSectionActionHistory.filter { selectedSectionHistoryKeys.contains($0.sectionKey) }).count
+    }
+
+    private func filteredHistoryEntries(from entries: [PlexSectionActionHistoryEntry]) -> [PlexSectionActionHistoryEntry] {
+        var filtered = entries
+
+        let query = sectionHistorySearchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if !query.isEmpty {
+            filtered = filtered.filter {
+                $0.sectionLabel.lowercased().contains(query) ||
+                $0.actionLabel.lowercased().contains(query) ||
+                $0.outcome.lowercased().contains(query)
+            }
+        }
+
+        if sectionHistoryActionFilter != "All" {
+            filtered = filtered.filter { $0.actionLabel == sectionHistoryActionFilter }
+        }
+
+        if sectionHistoryOutcomeFilter == "Failed Only" {
+            filtered = filtered.filter { $0.outcome.lowercased().contains("failed") }
+        } else if sectionHistoryOutcomeFilter == "Success/Queued" {
+            filtered = filtered.filter { !$0.outcome.lowercased().contains("failed") }
+        }
+
+        if sectionHistoryDaysFilter != "All", let days = Int(sectionHistoryDaysFilter) {
+            let cutoff = Date().addingTimeInterval(TimeInterval(-days * 24 * 3600))
+            filtered = filtered.filter { $0.timestamp >= cutoff }
+        }
+
+        return filtered
     }
     
     var body: some View {
@@ -1717,6 +1770,191 @@ struct SettingsView_New: View {
                             isSecure: true,
                             text: $viewModel.plexToken
                         )
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Server Profiles")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(.plexTextPrimary)
+
+                            HStack(spacing: 10) {
+                                TextField("Profile name", text: $newProfileName)
+                                    .textFieldStyle(RoundedBorderTextFieldStyle())
+
+                                ActionButton(title: "Save Profile", icon: "square.and.arrow.down", disabled: newProfileName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) {
+                                    viewModel.saveCurrentServerAsProfile(name: newProfileName)
+                                    newProfileName = ""
+                                }
+
+                                ActionButton(title: "Apply", icon: "checkmark.circle", disabled: viewModel.selectedPlexProfileId.isEmpty) {
+                                    viewModel.applySelectedServerProfile()
+                                }
+
+                                ActionButton(title: "Delete", icon: "trash", disabled: viewModel.selectedPlexProfileId.isEmpty) {
+                                    viewModel.deleteSelectedServerProfile()
+                                }
+                            }
+
+                            if !viewModel.plexServerProfiles.isEmpty {
+                                Picker("Server Profile", selection: $viewModel.selectedPlexProfileId) {
+                                    Text("Select profile").tag("")
+                                    ForEach(viewModel.plexServerProfiles, id: \.id) { profile in
+                                        Text(profile.name).tag(profile.id.uuidString)
+                                    }
+                                }
+                                .pickerStyle(MenuPickerStyle())
+                                .frame(width: 260)
+                            }
+                        }
+                        .padding(10)
+                        .background(Color.plexLightGray.opacity(0.2))
+                        .cornerRadius(8)
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Section Presets")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(.plexTextPrimary)
+
+                            HStack(spacing: 10) {
+                                TextField("Preset name", text: $newPresetName)
+                                    .textFieldStyle(RoundedBorderTextFieldStyle())
+
+                                Picker("Type", selection: $newPresetSectionType) {
+                                    Text("TV").tag("show")
+                                    Text("Movie").tag("movie")
+                                }
+                                .pickerStyle(MenuPickerStyle())
+                                .frame(width: 90)
+                            }
+
+                            HStack(spacing: 10) {
+                                Toggle("Refresh", isOn: $newPresetIncludeRefresh)
+                                    .toggleStyle(CheckboxToggleStyle())
+                                Toggle("Analyze", isOn: $newPresetIncludeAnalyze)
+                                    .toggleStyle(CheckboxToggleStyle())
+                                Toggle("Empty Trash", isOn: $newPresetIncludeEmptyTrash)
+                                    .toggleStyle(CheckboxToggleStyle())
+                                Toggle("All Sections", isOn: $newPresetRunOnAllSections)
+                                    .toggleStyle(CheckboxToggleStyle())
+                            }
+
+                            HStack(spacing: 10) {
+                                ActionButton(title: "Add Preset", icon: "plus.circle", disabled: newPresetName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) {
+                                    viewModel.addPreset(
+                                        name: newPresetName,
+                                        sectionType: newPresetSectionType,
+                                        includeRefresh: newPresetIncludeRefresh,
+                                        includeAnalyze: newPresetIncludeAnalyze,
+                                        includeEmptyTrash: newPresetIncludeEmptyTrash,
+                                        runOnAllSections: newPresetRunOnAllSections
+                                    )
+                                    newPresetName = ""
+                                }
+
+                                ActionButton(title: "Run Preset", icon: "play.circle", disabled: viewModel.selectedPlexPresetId.isEmpty) {
+                                    viewModel.runSelectedPreset()
+                                }
+
+                                ActionButton(title: "Delete", icon: "trash", disabled: viewModel.selectedPlexPresetId.isEmpty) {
+                                    viewModel.deleteSelectedPreset()
+                                }
+                            }
+
+                            if !viewModel.plexActionPresets.isEmpty {
+                                Picker("Preset", selection: $viewModel.selectedPlexPresetId) {
+                                    Text("Select preset").tag("")
+                                    ForEach(viewModel.plexActionPresets, id: \.id) { preset in
+                                        Text(preset.name).tag(preset.id.uuidString)
+                                    }
+                                }
+                                .pickerStyle(MenuPickerStyle())
+                                .frame(width: 300)
+                            }
+                        }
+                        .padding(10)
+                        .background(Color.plexLightGray.opacity(0.2))
+                        .cornerRadius(8)
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Reliability & Scheduler")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(.plexTextPrimary)
+
+                            HStack(spacing: 12) {
+                                Stepper("Retries: \(viewModel.sectionActionMaxRetries)", value: $viewModel.sectionActionMaxRetries, in: 0...5)
+                                    .frame(width: 150)
+
+                                Text("Delay")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(.plexTextSecondary)
+                                TextField("0.5", value: $viewModel.sectionActionRetryDelaySeconds, formatter: NumberFormatter.decimalTwoDigits)
+                                    .textFieldStyle(RoundedBorderTextFieldStyle())
+                                    .frame(width: 70)
+
+                                Toggle("Enable Scheduler", isOn: $viewModel.schedulerEnabled)
+                                    .toggleStyle(CheckboxToggleStyle())
+                            }
+
+                            HStack(spacing: 12) {
+                                Picker("Frequency", selection: $viewModel.schedulerFrequency) {
+                                    Text("Daily").tag(SchedulerFrequency.daily)
+                                    Text("Weekly").tag(SchedulerFrequency.weekly)
+                                }
+                                .pickerStyle(MenuPickerStyle())
+                                .frame(width: 110)
+
+                                Picker("Scope", selection: $viewModel.schedulerScope) {
+                                    Text("TV").tag(SchedulerScope.tv)
+                                    Text("Movie").tag(SchedulerScope.movie)
+                                    Text("Both").tag(SchedulerScope.both)
+                                }
+                                .pickerStyle(MenuPickerStyle())
+                                .frame(width: 110)
+
+                                ActionButton(title: "Save Scheduler", icon: "calendar.badge.clock", disabled: false) {
+                                    viewModel.saveSettings()
+                                }
+                            }
+
+                            if let nextRun = viewModel.schedulerNextRunAt {
+                                Text("Next scheduled run: \(viewModel.formattedSectionActionDate(nextRun))")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.plexTextSecondary)
+                            }
+                            if let lastRun = viewModel.schedulerLastRunAt {
+                                Text("Last run: \(viewModel.formattedSectionActionDate(lastRun))")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.plexTextSecondary)
+                            }
+                        }
+                        .padding(10)
+                        .background(Color.plexLightGray.opacity(0.2))
+                        .cornerRadius(8)
+
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Notifications & Capabilities")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(.plexTextPrimary)
+
+                            HStack(spacing: 12) {
+                                Toggle("Desktop Notifications", isOn: $viewModel.notificationsEnabled)
+                                    .toggleStyle(CheckboxToggleStyle())
+
+                                ActionButton(title: "Request Permission", icon: "bell.badge", disabled: false) {
+                                    viewModel.requestNotificationPermission()
+                                }
+
+                                ActionButton(title: "Detect Capabilities", icon: "wave.3.right.circle", disabled: viewModel.plexLibrarySections.isEmpty) {
+                                    viewModel.detectPlexCapabilities()
+                                }
+                            }
+
+                            Text("Capabilities: \(viewModel.capabilitySummary)")
+                                .font(.system(size: 11))
+                                .foregroundColor(.plexTextSecondary)
+                        }
+                        .padding(10)
+                        .background(Color.plexLightGray.opacity(0.2))
+                        .cornerRadius(8)
                         
                         Divider()
                             .background(Color.plexLightGray)
@@ -1834,7 +2072,7 @@ struct SettingsView_New: View {
                                     ActionButton(
                                         title: "Refresh TV Section",
                                         icon: "arrow.triangle.2.circlepath",
-                                        disabled: viewModel.selectedPlexTVSectionKey.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection || viewModel.isEmptyingPlexSection || viewModel.isCancellingPlexSectionJob || viewModel.isRunningPlexSectionMaintenance || viewModel.isRunningBulkPlexSectionMaintenance || viewModel.isRetryingFailedPlexSectionActions
+                                        disabled: !viewModel.plexCapabilities.canRefreshSection || viewModel.selectedPlexTVSectionKey.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection || viewModel.isEmptyingPlexSection || viewModel.isCancellingPlexSectionJob || viewModel.isRunningPlexSectionMaintenance || viewModel.isRunningBulkPlexSectionMaintenance || viewModel.isRetryingFailedPlexSectionActions
                                     ) {
                                         let label = tvSections.first(where: { $0.key == viewModel.selectedPlexTVSectionKey })?.title ?? "TV section"
                                         viewModel.refreshSelectedPlexSection(
@@ -1846,7 +2084,7 @@ struct SettingsView_New: View {
                                     ActionButton(
                                         title: "Refresh Movie Section",
                                         icon: "arrow.triangle.2.circlepath",
-                                        disabled: viewModel.selectedPlexMovieSectionKey.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection || viewModel.isEmptyingPlexSection || viewModel.isCancellingPlexSectionJob || viewModel.isRunningPlexSectionMaintenance || viewModel.isRunningBulkPlexSectionMaintenance || viewModel.isRetryingFailedPlexSectionActions
+                                        disabled: !viewModel.plexCapabilities.canRefreshSection || viewModel.selectedPlexMovieSectionKey.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection || viewModel.isEmptyingPlexSection || viewModel.isCancellingPlexSectionJob || viewModel.isRunningPlexSectionMaintenance || viewModel.isRunningBulkPlexSectionMaintenance || viewModel.isRetryingFailedPlexSectionActions
                                     ) {
                                         let label = movieSections.first(where: { $0.key == viewModel.selectedPlexMovieSectionKey })?.title ?? "Movie section"
                                         viewModel.refreshSelectedPlexSection(
@@ -1860,7 +2098,7 @@ struct SettingsView_New: View {
                                     ActionButton(
                                         title: "Analyze TV Section",
                                         icon: "waveform.path.ecg",
-                                        disabled: viewModel.selectedPlexTVSectionKey.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection || viewModel.isEmptyingPlexSection || viewModel.isCancellingPlexSectionJob || viewModel.isRunningPlexSectionMaintenance || viewModel.isRunningBulkPlexSectionMaintenance || viewModel.isRetryingFailedPlexSectionActions
+                                        disabled: !viewModel.plexCapabilities.canAnalyzeSection || viewModel.selectedPlexTVSectionKey.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection || viewModel.isEmptyingPlexSection || viewModel.isCancellingPlexSectionJob || viewModel.isRunningPlexSectionMaintenance || viewModel.isRunningBulkPlexSectionMaintenance || viewModel.isRetryingFailedPlexSectionActions
                                     ) {
                                         let label = tvSections.first(where: { $0.key == viewModel.selectedPlexTVSectionKey })?.title ?? "TV section"
                                         viewModel.analyzeSelectedPlexSection(
@@ -1872,7 +2110,7 @@ struct SettingsView_New: View {
                                     ActionButton(
                                         title: "Analyze Movie Section",
                                         icon: "waveform.path.ecg",
-                                        disabled: viewModel.selectedPlexMovieSectionKey.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection || viewModel.isEmptyingPlexSection || viewModel.isCancellingPlexSectionJob || viewModel.isRunningPlexSectionMaintenance || viewModel.isRunningBulkPlexSectionMaintenance || viewModel.isRetryingFailedPlexSectionActions
+                                        disabled: !viewModel.plexCapabilities.canAnalyzeSection || viewModel.selectedPlexMovieSectionKey.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection || viewModel.isEmptyingPlexSection || viewModel.isCancellingPlexSectionJob || viewModel.isRunningPlexSectionMaintenance || viewModel.isRunningBulkPlexSectionMaintenance || viewModel.isRetryingFailedPlexSectionActions
                                     ) {
                                         let label = movieSections.first(where: { $0.key == viewModel.selectedPlexMovieSectionKey })?.title ?? "Movie section"
                                         viewModel.analyzeSelectedPlexSection(
@@ -1886,7 +2124,7 @@ struct SettingsView_New: View {
                                     ActionButton(
                                         title: "Empty TV Trash",
                                         icon: "trash.fill",
-                                        disabled: viewModel.selectedPlexTVSectionKey.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection || viewModel.isEmptyingPlexSection || viewModel.isCancellingPlexSectionJob || viewModel.isRunningPlexSectionMaintenance || viewModel.isRunningBulkPlexSectionMaintenance || viewModel.isRetryingFailedPlexSectionActions
+                                        disabled: !viewModel.plexCapabilities.canEmptyTrashSection || viewModel.selectedPlexTVSectionKey.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection || viewModel.isEmptyingPlexSection || viewModel.isCancellingPlexSectionJob || viewModel.isRunningPlexSectionMaintenance || viewModel.isRunningBulkPlexSectionMaintenance || viewModel.isRetryingFailedPlexSectionActions
                                     ) {
                                         let label = tvSections.first(where: { $0.key == viewModel.selectedPlexTVSectionKey })?.title ?? "TV section"
                                         pendingSectionTrashConfirmation = SectionTrashConfirmation(
@@ -1898,7 +2136,7 @@ struct SettingsView_New: View {
                                     ActionButton(
                                         title: "Empty Movie Trash",
                                         icon: "trash.fill",
-                                        disabled: viewModel.selectedPlexMovieSectionKey.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection || viewModel.isEmptyingPlexSection || viewModel.isCancellingPlexSectionJob || viewModel.isRunningPlexSectionMaintenance || viewModel.isRunningBulkPlexSectionMaintenance || viewModel.isRetryingFailedPlexSectionActions
+                                        disabled: !viewModel.plexCapabilities.canEmptyTrashSection || viewModel.selectedPlexMovieSectionKey.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection || viewModel.isEmptyingPlexSection || viewModel.isCancellingPlexSectionJob || viewModel.isRunningPlexSectionMaintenance || viewModel.isRunningBulkPlexSectionMaintenance || viewModel.isRetryingFailedPlexSectionActions
                                     ) {
                                         let label = movieSections.first(where: { $0.key == viewModel.selectedPlexMovieSectionKey })?.title ?? "Movie section"
                                         pendingSectionTrashConfirmation = SectionTrashConfirmation(
@@ -1912,7 +2150,7 @@ struct SettingsView_New: View {
                                     ActionButton(
                                         title: "Run TV Maintenance",
                                         icon: "wrench.and.screwdriver",
-                                        disabled: viewModel.selectedPlexTVSectionKey.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection || viewModel.isEmptyingPlexSection || viewModel.isCancellingPlexSectionJob || viewModel.isRunningPlexSectionMaintenance || viewModel.isRunningBulkPlexSectionMaintenance || viewModel.isRetryingFailedPlexSectionActions
+                                        disabled: !viewModel.plexCapabilities.canRefreshSection || !viewModel.plexCapabilities.canAnalyzeSection || viewModel.selectedPlexTVSectionKey.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection || viewModel.isEmptyingPlexSection || viewModel.isCancellingPlexSectionJob || viewModel.isRunningPlexSectionMaintenance || viewModel.isRunningBulkPlexSectionMaintenance || viewModel.isRetryingFailedPlexSectionActions
                                     ) {
                                         let label = tvSections.first(where: { $0.key == viewModel.selectedPlexTVSectionKey })?.title ?? "TV section"
                                         viewModel.runPlexSectionMaintenance(
@@ -1924,7 +2162,7 @@ struct SettingsView_New: View {
                                     ActionButton(
                                         title: "Run Movie Maintenance",
                                         icon: "wrench.and.screwdriver",
-                                        disabled: viewModel.selectedPlexMovieSectionKey.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection || viewModel.isEmptyingPlexSection || viewModel.isCancellingPlexSectionJob || viewModel.isRunningPlexSectionMaintenance || viewModel.isRunningBulkPlexSectionMaintenance || viewModel.isRetryingFailedPlexSectionActions
+                                        disabled: !viewModel.plexCapabilities.canRefreshSection || !viewModel.plexCapabilities.canAnalyzeSection || viewModel.selectedPlexMovieSectionKey.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection || viewModel.isEmptyingPlexSection || viewModel.isCancellingPlexSectionJob || viewModel.isRunningPlexSectionMaintenance || viewModel.isRunningBulkPlexSectionMaintenance || viewModel.isRetryingFailedPlexSectionActions
                                     ) {
                                         let label = movieSections.first(where: { $0.key == viewModel.selectedPlexMovieSectionKey })?.title ?? "Movie section"
                                         viewModel.runPlexSectionMaintenance(
@@ -1938,7 +2176,7 @@ struct SettingsView_New: View {
                                     ActionButton(
                                         title: "Maintain All TV Sections",
                                         icon: "wrench.and.screwdriver.fill",
-                                        disabled: tvSections.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection || viewModel.isEmptyingPlexSection || viewModel.isCancellingPlexSectionJob || viewModel.isRunningPlexSectionMaintenance || viewModel.isRunningBulkPlexSectionMaintenance || viewModel.isRetryingFailedPlexSectionActions
+                                        disabled: !viewModel.plexCapabilities.canRefreshSection || !viewModel.plexCapabilities.canAnalyzeSection || tvSections.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection || viewModel.isEmptyingPlexSection || viewModel.isCancellingPlexSectionJob || viewModel.isRunningPlexSectionMaintenance || viewModel.isRunningBulkPlexSectionMaintenance || viewModel.isRetryingFailedPlexSectionActions
                                     ) {
                                         viewModel.runBulkPlexSectionMaintenance(sectionType: "show")
                                     }
@@ -1946,7 +2184,7 @@ struct SettingsView_New: View {
                                     ActionButton(
                                         title: "Maintain All Movie Sections",
                                         icon: "wrench.and.screwdriver.fill",
-                                        disabled: movieSections.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection || viewModel.isEmptyingPlexSection || viewModel.isCancellingPlexSectionJob || viewModel.isRunningPlexSectionMaintenance || viewModel.isRunningBulkPlexSectionMaintenance || viewModel.isRetryingFailedPlexSectionActions
+                                        disabled: !viewModel.plexCapabilities.canRefreshSection || !viewModel.plexCapabilities.canAnalyzeSection || movieSections.isEmpty || viewModel.isRefreshingPlexSection || viewModel.isAnalyzingPlexSection || viewModel.isEmptyingPlexSection || viewModel.isCancellingPlexSectionJob || viewModel.isRunningPlexSectionMaintenance || viewModel.isRunningBulkPlexSectionMaintenance || viewModel.isRetryingFailedPlexSectionActions
                                     ) {
                                         viewModel.runBulkPlexSectionMaintenance(sectionType: "movie")
                                     }
@@ -1956,7 +2194,7 @@ struct SettingsView_New: View {
                                     ActionButton(
                                         title: "Cancel Last Section Job",
                                         icon: "xmark.circle.fill",
-                                        disabled: !hasQueuedSectionJob || viewModel.isCancellingPlexSectionJob || viewModel.isRunningPlexSectionMaintenance || viewModel.isRunningBulkPlexSectionMaintenance || viewModel.isRetryingFailedPlexSectionActions
+                                        disabled: !viewModel.plexCapabilities.canCancelSectionJob || !hasQueuedSectionJob || viewModel.isCancellingPlexSectionJob || viewModel.isRunningPlexSectionMaintenance || viewModel.isRunningBulkPlexSectionMaintenance || viewModel.isRetryingFailedPlexSectionActions
                                     ) {
                                         viewModel.cancelLastQueuedPlexSectionJob()
                                     }
@@ -2031,6 +2269,44 @@ struct SettingsView_New: View {
                                     }
                                 }
 
+                                HStack(spacing: 12) {
+                                    ActionButton(
+                                        title: "Preview Trash Counts",
+                                        icon: "eye",
+                                        disabled: viewModel.plexLibrarySections.isEmpty || viewModel.isPreviewingSectionTrash
+                                    ) {
+                                        viewModel.previewTrashForLoadedSections()
+                                    }
+
+                                    if viewModel.isPreviewingSectionTrash {
+                                        ProgressView()
+                                            .progressViewStyle(CircularProgressViewStyle(tint: .plexOrange))
+                                    }
+                                }
+
+                                if !viewModel.sectionTrashPreviewRows.isEmpty {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text("Trash Preview")
+                                            .font(.system(size: 11, weight: .semibold))
+                                            .foregroundColor(.plexTextPrimary)
+
+                                        ForEach(Array(viewModel.sectionTrashPreviewRows.prefix(12)), id: \.id) { row in
+                                            HStack {
+                                                Text(row.sectionLabel)
+                                                    .font(.system(size: 11))
+                                                    .foregroundColor(.plexTextSecondary)
+                                                Spacer()
+                                                Text("\(row.trashCount)")
+                                                    .font(.system(size: 11, weight: .semibold))
+                                                    .foregroundColor(.plexTextPrimary)
+                                            }
+                                        }
+                                    }
+                                    .padding(8)
+                                    .background(Color.black.opacity(0.18))
+                                    .cornerRadius(6)
+                                }
+
                                 Text("Empty Trash is destructive and removes entries Plex marked as unavailable for the selected section.")
                                     .font(.system(size: 11))
                                     .foregroundColor(.plexTextSecondary)
@@ -2088,6 +2364,37 @@ struct SettingsView_New: View {
                             Text("Entries: \(sectionHistoryExportCount)")
                                 .font(.system(size: 12))
                                 .foregroundColor(.plexTextSecondary)
+                        }
+
+                        HStack(spacing: 10) {
+                            TextField("Search history", text: $sectionHistorySearchText)
+                                .textFieldStyle(RoundedBorderTextFieldStyle())
+
+                            Picker("Action", selection: $sectionHistoryActionFilter) {
+                                Text("All").tag("All")
+                                Text("Refresh").tag("Refresh")
+                                Text("Analyze").tag("Analyze")
+                                Text("Empty Trash").tag("Empty Trash")
+                            }
+                            .pickerStyle(MenuPickerStyle())
+                            .frame(width: 120)
+
+                            Picker("Outcome", selection: $sectionHistoryOutcomeFilter) {
+                                Text("All").tag("All")
+                                Text("Failed Only").tag("Failed Only")
+                                Text("Success/Queued").tag("Success/Queued")
+                            }
+                            .pickerStyle(MenuPickerStyle())
+                            .frame(width: 140)
+
+                            Picker("Window", selection: $sectionHistoryDaysFilter) {
+                                Text("All").tag("All")
+                                Text("1 Day").tag("1")
+                                Text("7 Days").tag("7")
+                                Text("30 Days").tag("30")
+                            }
+                            .pickerStyle(MenuPickerStyle())
+                            .frame(width: 110)
                         }
 
                         if viewModel.isRetryingFailedPlexSectionActions {
@@ -2161,6 +2468,67 @@ struct SettingsView_New: View {
                     .padding()
                 }
 
+                SectionCard(title: "Plex Job Monitor", icon: "waveform.path.badge.minus") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 12) {
+                            ActionButton(
+                                title: "Clear Monitor",
+                                icon: "trash",
+                                disabled: viewModel.activeSectionJobs.isEmpty && viewModel.completedSectionJobs.isEmpty
+                            ) {
+                                viewModel.clearSectionJobMonitor()
+                            }
+
+                            Text("Active: \(viewModel.activeSectionJobs.count)  •  Completed: \(viewModel.completedSectionJobs.count)")
+                                .font(.system(size: 12))
+                                .foregroundColor(.plexTextSecondary)
+                        }
+
+                        if viewModel.activeSectionJobs.isEmpty && viewModel.completedSectionJobs.isEmpty {
+                            Text("No section jobs recorded yet.")
+                                .font(.system(size: 12))
+                                .foregroundColor(.plexTextSecondary)
+                        } else {
+                            VStack(alignment: .leading, spacing: 6) {
+                                if !viewModel.activeSectionJobs.isEmpty {
+                                    Text("Running")
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundColor(.plexTextPrimary)
+                                    ForEach(Array(viewModel.activeSectionJobs.prefix(6)), id: \.id) { job in
+                                        HStack {
+                                            Text("\(job.actionLabel) • \(job.sectionLabel)")
+                                                .font(.system(size: 11))
+                                                .foregroundColor(.plexTextSecondary)
+                                            Spacer()
+                                            Text(viewModel.formattedSectionJobDuration(job))
+                                                .font(.system(size: 11, weight: .semibold))
+                                                .foregroundColor(.plexTextPrimary)
+                                        }
+                                    }
+                                }
+
+                                if !viewModel.completedSectionJobs.isEmpty {
+                                    Text("Recent")
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundColor(.plexTextPrimary)
+                                    ForEach(Array(viewModel.completedSectionJobs.prefix(8)), id: \.id) { job in
+                                        HStack {
+                                            Text("\(job.actionLabel) • \(job.sectionLabel)")
+                                                .font(.system(size: 11))
+                                                .foregroundColor(.plexTextSecondary)
+                                            Spacer()
+                                            Text("\(job.status) • \(viewModel.formattedSectionJobDuration(job))")
+                                                .font(.system(size: 11, weight: .semibold))
+                                                .foregroundColor(.plexTextPrimary)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    .padding()
+                }
+
                 SectionCard(title: "Change Log", icon: "doc.plaintext") {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Automatic batch log entries: \(viewModel.changeLogEntries.count)")
@@ -2213,10 +2581,19 @@ struct SettingsView_New: View {
                             }
                             .keyboardShortcut("b", modifiers: [.command, .option])
 
+                            ActionButton(title: "Rollback Wizard", icon: "arrow.uturn.backward.circle", disabled: viewModel.backupFiles.isEmpty) {
+                                showRollbackWizardConfirm = true
+                            }
+
                             Text("\(filteredBackupFiles.count)/\(viewModel.backupFiles.count) file(s)")
                                 .font(.system(size: 12))
                                 .foregroundColor(.plexTextSecondary)
                         }
+
+                        Toggle("After rollback, run safe maintenance on selected sections", isOn: $rollbackIncludeSafeRerun)
+                            .toggleStyle(CheckboxToggleStyle())
+                            .font(.system(size: 12))
+                            .foregroundColor(.plexTextSecondary)
 
                         HStack(spacing: 10) {
                             TextField("Search backups", text: $backupSearchText)
@@ -2346,6 +2723,21 @@ struct SettingsView_New: View {
                 },
                 secondaryButton: .cancel {
                     pendingSectionTrashConfirmation = nil
+                }
+            )
+        }
+        .alert(isPresented: $showRollbackWizardConfirm) {
+            Alert(
+                title: Text("Run Rollback Wizard?"),
+                message: Text(rollbackIncludeSafeRerun
+                              ? "Restore latest backup and run safe maintenance afterward."
+                              : "Restore latest backup without maintenance rerun."),
+                primaryButton: .destructive(Text("Run Rollback")) {
+                    viewModel.runRollbackWizard(reRunSafeActions: rollbackIncludeSafeRerun)
+                    showRollbackWizardConfirm = false
+                },
+                secondaryButton: .cancel {
+                    showRollbackWizardConfirm = false
                 }
             )
         }
