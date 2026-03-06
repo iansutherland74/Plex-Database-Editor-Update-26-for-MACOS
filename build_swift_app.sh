@@ -76,12 +76,33 @@ if [ -d "$FRAMEWORK_SEARCH_PATH" ]; then
     SWIFTC_ARGS+=( -F "$FRAMEWORK_SEARCH_PATH" )
 fi
 
-swiftc "${SWIFTC_ARGS[@]}" 2>&1 || {
+MAX_COMPILE_ATTEMPTS=2
+COMPILE_ATTEMPT=1
+
+while [ $COMPILE_ATTEMPT -le $MAX_COMPILE_ATTEMPTS ]; do
+    set +e
+    COMPILE_OUTPUT=$(swiftc "${SWIFTC_ARGS[@]}" 2>&1)
+    COMPILE_EXIT=$?
+    set -e
+
+    echo "$COMPILE_OUTPUT"
+
+    if [ $COMPILE_EXIT -eq 0 ]; then
+        break
+    fi
+
+    if echo "$COMPILE_OUTPUT" | grep -q "was modified during the build" && [ $COMPILE_ATTEMPT -lt $MAX_COMPILE_ATTEMPTS ]; then
+        echo "Detected transient source write during compile; retrying..."
+        COMPILE_ATTEMPT=$((COMPILE_ATTEMPT + 1))
+        sleep 1
+        continue
+    fi
+
     echo "✗ Compilation failed"
     echo "Make sure Xcode Command Line Tools are installed:"
     echo "  xcode-select --install"
     exit 1
-}
+done
 
 echo "✓ App compiled successfully"
 
