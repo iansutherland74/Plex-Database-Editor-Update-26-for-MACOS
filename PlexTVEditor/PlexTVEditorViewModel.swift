@@ -2,6 +2,31 @@ import Foundation
 import SQLite3
 import Cocoa
 
+struct PlexServerIdentity {
+    let friendlyName: String
+    let version: String
+    let machineIdentifier: String
+}
+
+private final class PlexIdentityXMLParserDelegate: NSObject, XMLParserDelegate {
+    var identity: PlexServerIdentity?
+
+    func parser(
+        _ parser: XMLParser,
+        didStartElement elementName: String,
+        namespaceURI: String?,
+        qualifiedName qName: String?,
+        attributes attributeDict: [String: String] = [:]
+    ) {
+        guard elementName == "MediaContainer" else { return }
+
+        let name = attributeDict["friendlyName"] ?? "Unknown"
+        let version = attributeDict["version"] ?? "Unknown"
+        let machineId = attributeDict["machineIdentifier"] ?? "Unknown"
+        identity = PlexServerIdentity(friendlyName: name, version: version, machineIdentifier: machineId)
+    }
+}
+
 struct EpisodeRemapOptions {
     // Fine-grained switches so one workflow can support metadata-only, artwork-only, or full remaps.
     let updateTitle: Bool
@@ -84,6 +109,13 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
     @Published var tmdbApiKey: String = ""
     @Published var plexSqlitePath: String = ""
     @Published var plexDbPath: String = ""
+    @Published var plexServerURL: String = ""
+    @Published var plexToken: String = ""
+    @Published var plexConnectionSummary: String = "Not tested"
+    @Published var plexServerName: String = ""
+    @Published var plexServerVersion: String = ""
+    @Published var plexServerMachineIdentifier: String = ""
+    @Published var isTestingPlexConnection = false
     @Published var statusMessage: String = "" {
         didSet {
             logBatchStatusIfNeeded(statusMessage)
@@ -1355,11 +1387,21 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
                     migratedSettings = true
                 }
             }
+
+            let savedServerURL = settings.plexServerURL ?? "http://127.0.0.1:32400"
+            let normalizedServerURL = normalizePlexServerURL(savedServerURL)
+            self.plexServerURL = normalizedServerURL
+            self.plexToken = settings.plexToken ?? ""
+            if normalizedServerURL != savedServerURL {
+                migratedSettings = true
+            }
         } else {
             // Set defaults
             self.tmdbApiKey = "fd51c863ad45547eb19ba9f70f3ac4f0"
             self.plexSqlitePath = defaultPlexSqlitePath
             self.plexDbPath = defaultPlexDbPath
+            self.plexServerURL = "http://127.0.0.1:32400"
+            self.plexToken = ""
         }
 
         if migratedSettings {
@@ -1373,10 +1415,17 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
             self.plexDbPath = normalizedDbPath
         }
 
+        let normalizedServerURL = normalizePlexServerURL(plexServerURL)
+        if !normalizedServerURL.isEmpty {
+            self.plexServerURL = normalizedServerURL
+        }
+
         let settings = Settings(
             tmdbApiKey: tmdbApiKey,
             plexSqlitePath: plexSqlitePath,
-            plexDbPath: self.plexDbPath
+            plexDbPath: self.plexDbPath,
+            plexServerURL: self.plexServerURL,
+            plexToken: plexToken.trimmingCharacters(in: .whitespacesAndNewlines)
         )
         if let encoded = try? JSONEncoder().encode(settings) {
             UserDefaults.standard.set(encoded, forKey: "PlexTVEditorSettings")
@@ -1393,6 +1442,47 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
             statusMessage = "✓ Plex connection successful (\(testShows.count) shows found)"
         } else {
             statusMessage = "✗ Could not find shows in Plex database"
+        }
+    }
+
+    func testPlexAPIConnection() {
+        let normalizedServerURL = normalizePlexServerURL(plexServerURL)
+        guard !normalizedServerURL.isEmpty,
+              let serverURL = URL(string: normalizedServerURL) else {
+            plexConnectionSummary = "Invalid Plex server URL"
+            statusMessage = "Enter a valid Plex server URL"
+            return
+        }
+
+        let token = plexToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !token.isEmpty else {
+            plexConnectionSummary = "Missing Plex token"
+            statusMessage = "Enter Plex token before testing API"
+            return
+        }
+
+        isTestingPlexConnection = true
+        plexConnectionSummary = "Testing..."
+
+        Task {
+            do {
+                let identity = try await fetchPlexIdentity(baseURL: serverURL, token: token)
+                DispatchQueue.main.async {
+                    self.isTestingPlexConnection = false
+                    self.plexServerURL = normalizedServerURL
+                    self.plexServerName = identity.friendlyName
+                    self.plexServerVersion = identity.version
+                    self.plexServerMachineIdentifier = identity.machineIdentifier
+                    self.plexConnectionSummary = "Connected to \(identity.friendlyName)"
+                    self.statusMessage = "✓ Plex API connected (\(identity.friendlyName) v\(identity.version))"
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self.isTestingPlexConnection = false
+                    self.plexConnectionSummary = "Connection failed"
+                    self.statusMessage = "✗ Plex API test failed: \(error.localizedDescription)"
+                }
+            }
         }
     }
     
@@ -1435,6 +1525,64 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
     
     private func expandPath(_ path: String) -> String {
         return NSString(string: path).expandingTildeInPath
+    }
+
+    private func normalizePlexServerURL(_ value: String) -> String {
+        var trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+
+        if !trimmed.lowercased().hasPrefix("http://") && !trimmed.lowercased().hasPrefix("https://") {
+            trimmed = "http://\(trimmed)"
+        }
+
+        while trimmed.hasSuffix("/") {
+            trimmed.removeLast()
+        }
+
+        return trimmed
+    }
+
+    private func fetchPlexIdentity(baseURL: URL, token: String) async throws -> PlexServerIdentity {
+        var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
+        components?.path = "/identity"
+        components?.queryItems = [
+            URLQueryItem(name: "X-Plex-Token", value: token)
+        ]
+
+        guard let url = components?.url else {
+            throw URLError(.badURL)
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 12
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw URLError(.badServerResponse)
+        }
+
+        guard (200...299).contains(httpResponse.statusCode) else {
+            throw NSError(
+                domain: "PlexTVEditor",
+                code: httpResponse.statusCode,
+                userInfo: [NSLocalizedDescriptionKey: "Plex API returned HTTP \(httpResponse.statusCode)"]
+            )
+        }
+
+        let delegate = PlexIdentityXMLParserDelegate()
+        let parser = XMLParser(data: data)
+        parser.delegate = delegate
+
+        guard parser.parse(), let identity = delegate.identity else {
+            throw NSError(
+                domain: "PlexTVEditor",
+                code: 3,
+                userInfo: [NSLocalizedDescriptionKey: "Could not parse Plex identity response"]
+            )
+        }
+
+        return identity
     }
 
     private func normalizePlexDbPath(_ path: String) -> String {
@@ -1956,4 +2104,6 @@ struct Settings: Codable {
     let tmdbApiKey: String
     let plexSqlitePath: String
     let plexDbPath: String
+    let plexServerURL: String?
+    let plexToken: String?
 }

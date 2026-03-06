@@ -1578,6 +1578,20 @@ struct SettingsView_New: View {
                         ) {
                             viewModel.browsePlexDatabase()
                         }
+
+                        SettingField(
+                            label: "Plex Server URL",
+                            hint: "Example: http://127.0.0.1:32400",
+                            isSecure: false,
+                            text: $viewModel.plexServerURL
+                        )
+
+                        SettingField(
+                            label: "Plex Token",
+                            hint: "Plex API token for server calls",
+                            isSecure: true,
+                            text: $viewModel.plexToken
+                        )
                         
                         Divider()
                             .background(Color.plexLightGray)
@@ -1592,12 +1606,51 @@ struct SettingsView_New: View {
                                 viewModel.testConnection()
                             }
                             .keyboardShortcut("k", modifiers: [.command, .option])
+
+                            ActionButton(title: "Test Plex API", icon: "network", disabled: viewModel.isTestingPlexConnection) {
+                                viewModel.testPlexAPIConnection()
+                            }
                             
                             ActionButton(title: "Reload Library", icon: "arrow.clockwise", disabled: false) {
                                 viewModel.loadShows()
                                 viewModel.loadMovies()
                             }
                             .keyboardShortcut("r", modifiers: [.command, .option])
+                        }
+
+                        if viewModel.isTestingPlexConnection {
+                            HStack(spacing: 8) {
+                                ProgressView()
+                                    .progressViewStyle(CircularProgressViewStyle(tint: .plexOrange))
+                                Text("Testing Plex API...")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(.plexTextSecondary)
+                            }
+                        }
+
+                        if !viewModel.plexConnectionSummary.isEmpty {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Plex API: \(viewModel.plexConnectionSummary)")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundColor(.plexTextPrimary)
+
+                                if !viewModel.plexServerName.isEmpty {
+                                    Text("Server: \(viewModel.plexServerName)  •  Version: \(viewModel.plexServerVersion)")
+                                        .font(.system(size: 11))
+                                        .foregroundColor(.plexTextSecondary)
+                                }
+
+                                if !viewModel.plexServerMachineIdentifier.isEmpty {
+                                    Text("Machine ID: \(viewModel.plexServerMachineIdentifier)")
+                                        .font(.system(size: 11))
+                                        .foregroundColor(.plexTextSecondary)
+                                        .lineLimit(1)
+                                }
+                            }
+                            .padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.plexLightGray.opacity(0.25))
+                            .cornerRadius(8)
                         }
                     }
                     .padding()

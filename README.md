@@ -53,6 +53,10 @@ In the app Settings tab, verify:
 - Plex SQLite path (macOS default):
   - `/Applications/Plex Media Server.app/Contents/MacOS/Plex SQLite`
 - Plex DB path
+- Plex Server URL (default: `http://127.0.0.1:32400`)
+- Plex Token
+
+Use `Test Plex API` in Settings to validate server connectivity and view server identity details.
 
 ## Safety Notes
 
