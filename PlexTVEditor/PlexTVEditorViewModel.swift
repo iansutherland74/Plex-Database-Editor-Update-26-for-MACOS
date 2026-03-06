@@ -187,6 +187,8 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
     @Published var isEmptyingPlexSection = false
     @Published var isCancellingPlexSectionJob = false
     @Published var isRunningPlexSectionMaintenance = false
+    @Published var isRunningBulkPlexSectionMaintenance = false
+    @Published var bulkPlexSectionMaintenanceProgress: String = ""
     @Published var lastQueuedPlexSectionKey: String = ""
     @Published var lastQueuedPlexSectionLabel: String = ""
     @Published var lastQueuedPlexSectionAction: String = ""
@@ -1902,6 +1904,111 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
             }
         }
     }
+
+    func runBulkPlexSectionMaintenance(sectionType: String) {
+        let normalizedServerURL = normalizePlexServerURL(plexServerURL)
+        guard !normalizedServerURL.isEmpty,
+              let serverURL = URL(string: normalizedServerURL) else {
+            statusMessage = "Enter a valid Plex server URL"
+            return
+        }
+
+        let token = plexToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !token.isEmpty else {
+            statusMessage = "Enter Plex token before running bulk maintenance"
+            return
+        }
+
+        let normalizedType = sectionType.lowercased()
+        guard normalizedType == "show" || normalizedType == "movie" else {
+            statusMessage = "Unsupported section type for bulk maintenance"
+            return
+        }
+
+        let targetSections = plexLibrarySections
+            .filter { $0.type.lowercased() == normalizedType }
+            .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+
+        guard !targetSections.isEmpty else {
+            let scopeLabel = normalizedType == "show" ? "TV" : "movie"
+            statusMessage = "Load Plex sections first. No \(scopeLabel) sections available."
+            return
+        }
+
+        let scopeLabel = normalizedType == "show" ? "TV" : "movie"
+        isRunningBulkPlexSectionMaintenance = true
+        bulkPlexSectionMaintenanceProgress = "0/\(targetSections.count) sections queued"
+        statusMessage = "Running bulk \(scopeLabel) maintenance..."
+
+        Task {
+            let actions: [PlexSectionActionKind] = [.refresh, .analyze]
+            var sectionSuccessCount = 0
+            var sectionFailureCount = 0
+            var processedCount = 0
+
+            for section in targetSections {
+                var queuedActions: [PlexSectionActionKind] = []
+                var failedActions: [(PlexSectionActionKind, String)] = []
+
+                for action in actions {
+                    do {
+                        switch action {
+                        case .refresh:
+                            try await queuePlexSectionRefresh(baseURL: serverURL, token: token, sectionKey: section.key)
+                        case .analyze:
+                            try await queuePlexSectionAnalyze(baseURL: serverURL, token: token, sectionKey: section.key)
+                        case .emptyTrash:
+                            continue
+                        }
+                        queuedActions.append(action)
+                    } catch {
+                        failedActions.append((action, error.localizedDescription))
+                    }
+                }
+
+                processedCount += 1
+                if failedActions.isEmpty {
+                    sectionSuccessCount += 1
+                } else {
+                    sectionFailureCount += 1
+                }
+
+                let sectionQueuedActions = queuedActions
+                let sectionFailedActions = failedActions
+                let progressText = "\(processedCount)/\(targetSections.count) sections queued"
+
+                DispatchQueue.main.async {
+                    for action in sectionQueuedActions {
+                        self.rememberQueuedPlexSectionJob(sectionKey: section.key, sectionLabel: section.title, action: action)
+                        self.recordPlexSectionAction(
+                            sectionKey: section.key,
+                            sectionLabel: section.title,
+                            action: action,
+                            outcome: "Queued via bulk maintenance"
+                        )
+                    }
+
+                    for (action, message) in sectionFailedActions {
+                        self.recordPlexSectionAction(
+                            sectionKey: section.key,
+                            sectionLabel: section.title,
+                            action: action,
+                            outcome: "Failed via bulk maintenance: \(message)"
+                        )
+                    }
+
+                    self.bulkPlexSectionMaintenanceProgress = progressText
+                }
+            }
+
+            DispatchQueue.main.async {
+                self.isRunningBulkPlexSectionMaintenance = false
+                self.bulkPlexSectionMaintenanceProgress = ""
+                self.statusMessage = "Bulk \(scopeLabel) maintenance complete: \(sectionSuccessCount) succeeded, \(sectionFailureCount) with failures"
+            }
+        }
+    }
+
     func cancelLastQueuedPlexSectionJob() {
         let normalizedServerURL = normalizePlexServerURL(plexServerURL)
         guard !normalizedServerURL.isEmpty,
