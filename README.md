@@ -99,6 +99,16 @@ Use `Test Plex API` in Settings to validate server connectivity and view server 
 - Orchestration + TMDB logic: `PlexTVEditor/PlexTVEditorViewModel.swift`
 - Plex SQL read/write layer: `PlexTVEditor/PlexDatabaseManager.swift`
 
+## CI Checks
+
+GitHub Actions workflow `macOS Swift Build` runs on pushes/PRs to `main` and validates:
+
+- Swift source compile for the app target files
+- `./run_dry_run_tests.sh`
+- `./run_stage2_tests.sh`
+- Shell script syntax checks
+- `./run_live_plex_smoke.sh --help` sanity check
+
 ## Known Build Warnings
 
 Current builds may show Swift `Sendable` capture warnings in `PlexTVEditorViewModel.swift`. They are non-blocking and do not stop app compilation.
