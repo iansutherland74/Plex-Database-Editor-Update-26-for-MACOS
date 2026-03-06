@@ -52,6 +52,28 @@ cd /Users/sutherland/repo
 ./run_stage2_tests.sh
 ```
 
+## Run Live Plex Smoke Tests
+
+Read-only endpoint checks:
+
+```bash
+cd /Users/sutherland/repo
+./run_live_plex_smoke.sh
+```
+
+Include non-destructive queue checks (`refresh`/`analyze`):
+
+```bash
+cd /Users/sutherland/repo
+./run_live_plex_smoke.sh --include-write
+```
+
+Use explicit server/token if needed:
+
+```bash
+PLEX_SERVER_URL="http://127.0.0.1:32400" PLEX_TOKEN="<token>" ./run_live_plex_smoke.sh
+```
+
 ## First Launch Setup
 
 In the app Settings tab, verify:
