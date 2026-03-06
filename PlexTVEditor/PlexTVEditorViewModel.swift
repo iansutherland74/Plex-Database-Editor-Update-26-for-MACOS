@@ -15,6 +15,32 @@ struct PlexLibrarySection: Identifiable {
     let type: String
 }
 
+enum PlexSectionActionKind: String {
+    case refresh = "Refresh"
+    case analyze = "Analyze"
+    case emptyTrash = "Empty Trash"
+
+    var pathComponent: String {
+        switch self {
+        case .refresh:
+            return "refresh"
+        case .analyze:
+            return "analyze"
+        case .emptyTrash:
+            return "emptyTrash"
+        }
+    }
+}
+
+struct PlexSectionActionHistoryEntry: Identifiable {
+    let id = UUID()
+    let timestamp: Date
+    let sectionKey: String
+    let sectionLabel: String
+    let actionLabel: String
+    let outcome: String
+}
+
 private final class PlexIdentityXMLParserDelegate: NSObject, XMLParserDelegate {
     var identity: PlexServerIdentity?
 
@@ -159,6 +185,11 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
     @Published var isRefreshingPlexSection = false
     @Published var isAnalyzingPlexSection = false
     @Published var isEmptyingPlexSection = false
+    @Published var isCancellingPlexSectionJob = false
+    @Published var lastQueuedPlexSectionKey: String = ""
+    @Published var lastQueuedPlexSectionLabel: String = ""
+    @Published var lastQueuedPlexSectionAction: String = ""
+    @Published var plexSectionActionHistory: [PlexSectionActionHistoryEntry] = []
     @Published var statusMessage: String = "" {
         didSet {
             logBatchStatusIfNeeded(statusMessage)
@@ -1699,11 +1730,14 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
                 DispatchQueue.main.async {
                     self.isRefreshingPlexSection = false
                     self.statusMessage = "Plex section refresh queued for \(sectionLabel)"
+                    self.rememberQueuedPlexSectionJob(sectionKey: trimmedSectionKey, sectionLabel: sectionLabel, action: .refresh)
+                    self.recordPlexSectionAction(sectionKey: trimmedSectionKey, sectionLabel: sectionLabel, action: .refresh, outcome: "Queued")
                 }
             } catch {
                 DispatchQueue.main.async {
                     self.isRefreshingPlexSection = false
                     self.statusMessage = "Section refresh failed for \(sectionLabel): \(error.localizedDescription)"
+                    self.recordPlexSectionAction(sectionKey: trimmedSectionKey, sectionLabel: sectionLabel, action: .refresh, outcome: "Failed: \(error.localizedDescription)")
                 }
             }
         }
@@ -1738,11 +1772,14 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
                 DispatchQueue.main.async {
                     self.isAnalyzingPlexSection = false
                     self.statusMessage = "Plex section analyze queued for \(sectionLabel)"
+                    self.rememberQueuedPlexSectionJob(sectionKey: trimmedSectionKey, sectionLabel: sectionLabel, action: .analyze)
+                    self.recordPlexSectionAction(sectionKey: trimmedSectionKey, sectionLabel: sectionLabel, action: .analyze, outcome: "Queued")
                 }
             } catch {
                 DispatchQueue.main.async {
                     self.isAnalyzingPlexSection = false
                     self.statusMessage = "Section analyze failed for \(sectionLabel): \(error.localizedDescription)"
+                    self.recordPlexSectionAction(sectionKey: trimmedSectionKey, sectionLabel: sectionLabel, action: .analyze, outcome: "Failed: \(error.localizedDescription)")
                 }
             }
         }
@@ -1777,18 +1814,80 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
                 DispatchQueue.main.async {
                     self.isEmptyingPlexSection = false
                     self.statusMessage = "Plex empty trash queued for \(sectionLabel)"
+                    self.rememberQueuedPlexSectionJob(sectionKey: trimmedSectionKey, sectionLabel: sectionLabel, action: .emptyTrash)
+                    self.recordPlexSectionAction(sectionKey: trimmedSectionKey, sectionLabel: sectionLabel, action: .emptyTrash, outcome: "Queued")
                 }
             } catch {
                 DispatchQueue.main.async {
                     self.isEmptyingPlexSection = false
                     self.statusMessage = "Empty trash failed for \(sectionLabel): \(error.localizedDescription)"
+                    self.recordPlexSectionAction(sectionKey: trimmedSectionKey, sectionLabel: sectionLabel, action: .emptyTrash, outcome: "Failed: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+    func cancelLastQueuedPlexSectionJob() {
+        let normalizedServerURL = normalizePlexServerURL(plexServerURL)
+        guard !normalizedServerURL.isEmpty,
+              let serverURL = URL(string: normalizedServerURL) else {
+            statusMessage = "Enter a valid Plex server URL"
+            return
+        }
+
+        let token = plexToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !token.isEmpty else {
+            statusMessage = "Enter Plex token before cancelling section job"
+            return
+        }
+
+        let sectionKey = lastQueuedPlexSectionKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sectionLabel = lastQueuedPlexSectionLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+        let actionLabel = lastQueuedPlexSectionAction.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !sectionKey.isEmpty,
+              !sectionLabel.isEmpty,
+              !actionLabel.isEmpty,
+              let action = PlexSectionActionKind(rawValue: actionLabel) else {
+            statusMessage = "No queued section job available to cancel"
+            return
+        }
+
+        isCancellingPlexSectionJob = true
+        statusMessage = "Requesting cancel for \(actionLabel) on \(sectionLabel)..."
+
+        Task {
+            do {
+                try await queuePlexSectionCancel(baseURL: serverURL, token: token, sectionKey: sectionKey, action: action)
+                DispatchQueue.main.async {
+                    self.isCancellingPlexSectionJob = false
+                    self.statusMessage = "Cancel requested for \(actionLabel) on \(sectionLabel)"
+                    self.recordPlexSectionAction(sectionKey: sectionKey, sectionLabel: sectionLabel, action: action, outcome: "Cancel requested")
+                    self.clearQueuedPlexSectionJob()
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self.isCancellingPlexSectionJob = false
+                    self.statusMessage = "Cancel failed for \(actionLabel) on \(sectionLabel): \(error.localizedDescription)"
+                    self.recordPlexSectionAction(sectionKey: sectionKey, sectionLabel: sectionLabel, action: action, outcome: "Cancel failed")
                 }
             }
         }
     }
 
+    func clearPlexSectionActionHistory() {
+        plexSectionActionHistory.removeAll()
+        statusMessage = "Cleared section action history"
+    }
+
     func lockAllPlexMetadata(itemIds: [Int], entityLabel: String) {
         setPlexMetadataLockState(itemIds: itemIds, entityLabel: entityLabel, isLocked: true)
+    }
+
+    func formattedSectionActionDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .short
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
     }
 
     func unlockAllPlexMetadata(itemIds: [Int], entityLabel: String) {
@@ -2164,6 +2263,76 @@ final class PlexTVEditorViewModel: ObservableObject, @unchecked Sendable {
                 code: getResponse.statusCode,
                 userInfo: [NSLocalizedDescriptionKey: "Empty trash failed for section \(sectionKey)"]
             )
+        }
+    }
+
+    private func queuePlexSectionCancel(baseURL: URL, token: String, sectionKey: String, action: PlexSectionActionKind) async throws {
+        let candidates: [(path: String, method: String)] = [
+            ("/library/sections/\(sectionKey)/\(action.pathComponent)/cancel", "PUT"),
+            ("/library/sections/\(sectionKey)/\(action.pathComponent)/cancel", "POST"),
+            ("/library/sections/\(sectionKey)/\(action.pathComponent)", "DELETE")
+        ]
+
+        var lastStatusCode: Int?
+
+        for candidate in candidates {
+            do {
+                var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)
+                components?.path = candidate.path
+                components?.queryItems = [
+                    URLQueryItem(name: "X-Plex-Token", value: token)
+                ]
+
+                guard let url = components?.url else { continue }
+
+                var request = URLRequest(url: url)
+                request.httpMethod = candidate.method
+                request.timeoutInterval = 12
+
+                let (_, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse else { continue }
+
+                if (200...299).contains(http.statusCode) {
+                    return
+                }
+
+                lastStatusCode = http.statusCode
+            } catch {
+                continue
+            }
+        }
+
+        throw NSError(
+            domain: "PlexTVEditor",
+            code: lastStatusCode ?? -1,
+            userInfo: [NSLocalizedDescriptionKey: "Plex server did not accept cancel for this section job"]
+        )
+    }
+
+    private func rememberQueuedPlexSectionJob(sectionKey: String, sectionLabel: String, action: PlexSectionActionKind) {
+        lastQueuedPlexSectionKey = sectionKey
+        lastQueuedPlexSectionLabel = sectionLabel
+        lastQueuedPlexSectionAction = action.rawValue
+    }
+
+    private func clearQueuedPlexSectionJob() {
+        lastQueuedPlexSectionKey = ""
+        lastQueuedPlexSectionLabel = ""
+        lastQueuedPlexSectionAction = ""
+    }
+
+    private func recordPlexSectionAction(sectionKey: String, sectionLabel: String, action: PlexSectionActionKind, outcome: String) {
+        let entry = PlexSectionActionHistoryEntry(
+            timestamp: Date(),
+            sectionKey: sectionKey,
+            sectionLabel: sectionLabel,
+            actionLabel: action.rawValue,
+            outcome: outcome
+        )
+
+        plexSectionActionHistory.insert(entry, at: 0)
+        if plexSectionActionHistory.count > 120 {
+            plexSectionActionHistory = Array(plexSectionActionHistory.prefix(120))
         }
     }
 
