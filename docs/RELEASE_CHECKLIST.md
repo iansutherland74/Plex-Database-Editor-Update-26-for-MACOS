@@ -22,6 +22,13 @@ cd /Users/sutherland/repo
 ./run_stage3_tests.sh
 ```
 
+Run Stage 4 release-tag tests directly:
+
+```bash
+cd /Users/sutherland/repo
+./run_stage4_tests.sh
+```
+
 Run full release prep (includes build):
 
 ```bash
